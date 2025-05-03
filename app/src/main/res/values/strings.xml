@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Step Alarm</string>
+    <string name="set_alarm_time">Set Alarm Time</string>
+    <string name="set_alarm">Set Alarm</string>
+    <string name="take_steps">Take 10 Steps to Dismiss Alarm</string>
+    <string name="steps_taken">Steps taken: %1$d/10</string>
+    <string name="dismiss_alarm">Dismiss Alarm</string>
+</resources> 
