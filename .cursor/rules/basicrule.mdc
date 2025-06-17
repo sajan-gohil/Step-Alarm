@@ -1,0 +1,7 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+- If a build fails, next time, run it with flags to get full stack trace/verbosity if flags are available.
+- If the instructions mention an idea, implement the functionality too, not just the UI.
