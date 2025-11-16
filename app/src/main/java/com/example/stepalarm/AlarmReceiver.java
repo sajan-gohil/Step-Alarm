@@ -35,6 +35,29 @@ public class AlarmReceiver extends BroadcastReceiver {
             return;
         }
 
+        // Get alarm ID from intent
+        long alarmId = intent.getLongExtra("alarm_id", -1);
+        if (alarmId == -1) {
+            Log.e(TAG, "No alarm_id in intent");
+            return;
+        }
+
+        // Check if alarm is enabled
+        AlarmDatabase alarmDatabase = new AlarmDatabase(context);
+        Alarm alarm = alarmDatabase.getAlarm(alarmId);
+        if (alarm == null || !alarm.isEnabled()) {
+            Log.d(TAG, "Alarm not found or disabled, ignoring");
+            return;
+        }
+
+        // If it's a one-time alarm, delete it after triggering
+        if (!alarm.isRepeating()) {
+            alarmDatabase.deleteAlarm(alarmId);
+        } else {
+            // Reschedule repeating alarm for next occurrence
+            AlarmScheduler.scheduleAlarm(context, alarm);
+        }
+
         isAlarmActive = true;
         
         // Get the system's default alarm sound

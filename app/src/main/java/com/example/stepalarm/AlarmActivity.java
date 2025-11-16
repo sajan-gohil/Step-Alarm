@@ -71,8 +71,9 @@ public class AlarmActivity extends Activity {
             startOverlayService();
         }
 
-        // Bind to StepCounterService
+        // Start and bind to StepCounterService
         Intent intent = new Intent(this, StepCounterService.class);
+        startService(intent); // Start the service first
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
     }
 

@@ -6,4 +6,19 @@
     <string name="take_steps">Take 10 Steps to Dismiss Alarm</string>
     <string name="steps_taken">Steps taken: %1$d/10</string>
     <string name="dismiss_alarm">Dismiss Alarm</string>
+    <string name="my_alarms">My Alarms</string>
+    <string name="add_alarm">Add Alarm</string>
+    <string name="repeat_alarm">Repeat Alarm</string>
+    <string name="select_repeat_days">Select Repeat Days</string>
+    <string name="save_alarm">Save Alarm</string>
+    <string name="delete_alarm">Delete Alarm</string>
+    <string name="no_alarms">No alarms set. Tap the + button to add one.</string>
+    <string name="overlay_permission_title">Permission Required</string>
+    <string name="overlay_permission_message">This app needs permission to display over other apps so that alarms can show even when the screen is locked. Please grant this permission in the settings.</string>
+    <string name="grant_permission">Grant Permission</string>
+    <string name="later">Later</string>
+    <string name="overlay_permission_granted">Permission granted! Alarms will now work properly.</string>
+    <string name="activity_recognition_permission_title">Activity Recognition Permission Required</string>
+    <string name="activity_recognition_permission_message">This app needs permission to recognize physical activity (like steps) to count steps when the alarm goes off. Please grant this permission for the alarm to work properly.</string>
+    <string name="activity_recognition_permission_granted">Activity recognition permission granted! Step counting will now work.</string>
 </resources> 
