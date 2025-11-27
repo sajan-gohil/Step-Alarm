@@ -3,9 +3,6 @@
     <string name="app_name">Step Alarm</string>
     <string name="set_alarm_time">Set Alarm Time</string>
     <string name="set_alarm">Set Alarm</string>
-    <string name="take_steps">Take 10 Steps to Dismiss Alarm</string>
-    <string name="steps_taken">Steps taken: %1$d/10</string>
-    <string name="dismiss_alarm">Dismiss Alarm</string>
     <string name="my_alarms">My Alarms</string>
     <string name="add_alarm">Add Alarm</string>
     <string name="repeat_alarm">Repeat Alarm</string>

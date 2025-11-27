@@ -7,14 +7,18 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Menu
+import android.view.MenuItem
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
     private lateinit var alarmsRecyclerView: RecyclerView
@@ -82,6 +86,61 @@ class MainActivity : AppCompatActivity() {
         checkActivityRecognitionPermission()
 
         loadAlarms()
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.view_logs -> {
+                viewLogs()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun viewLogs() {
+        try {
+            val logFile = LogFileWriter.getLogFile(this)
+            if (logFile.exists() && logFile.length() > 0) {
+                val logContent = logFile.readText()
+                AlertDialog.Builder(this)
+                    .setTitle("App Logs")
+                    .setMessage(logContent.takeLast(5000)) // Show last 5000 characters
+                    .setPositiveButton("OK", null)
+                    .setNeutralButton("Share") { _, _ ->
+                        shareLogFile(logFile)
+                    }
+                    .show()
+            } else {
+                Toast.makeText(this, "No logs available yet", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error reading logs: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun shareLogFile(logFile: File) {
+        try {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                logFile
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Step Alarm Logs")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Share logs"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error sharing logs: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun checkOverlayPermission() {

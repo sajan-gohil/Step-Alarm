@@ -19,8 +19,14 @@ public class AlarmOverlayService extends Service {
 
     @Override
     public void onCreate() {
+        LogFileWriter.logInfo(this, "AlarmOverlayService", "=== onCreate() called ===");
         super.onCreate();
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (windowManager == null) {
+            RuntimeException e = new RuntimeException("WindowManager is null");
+            LogFileWriter.logError(this, "AlarmOverlayService", "WindowManager is null", e);
+            throw e;
+        }
         createOverlayView();
     }
 
@@ -28,12 +34,15 @@ public class AlarmOverlayService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && intent.hasExtra("steps")) {
             int steps = intent.getIntExtra("steps", 0);
+            LogFileWriter.logInfo(this, "AlarmOverlayService", "Updating step count: " + steps);
             updateStepCount(steps);
         }
         return START_STICKY;
     }
 
     private void createOverlayView() {
+        LogFileWriter.logInfo(this, "AlarmOverlayService", "Creating overlay view");
+        
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -60,22 +69,21 @@ public class AlarmOverlayService extends Service {
         remainingStepsText = overlayView.findViewById(R.id.remainingStepsText);
 
         windowManager.addView(overlayView, params);
+        LogFileWriter.logInfo(this, "AlarmOverlayService", "Overlay view created and added successfully");
     }
 
     public void updateStepCount(int steps) {
-        if (overlayView != null) {
-            int remaining = REQUIRED_STEPS - steps;
-            stepCountText.setText("Steps taken: " + steps);
-            remainingStepsText.setText("Steps remaining: " + remaining);
-        }
+        int remaining = REQUIRED_STEPS - steps;
+        stepCountText.setText("Steps taken: " + steps);
+        remainingStepsText.setText("Steps remaining: " + remaining);
     }
 
     @Override
     public void onDestroy() {
+        LogFileWriter.logInfo(this, "AlarmOverlayService", "=== onDestroy() called ===");
         super.onDestroy();
-        if (overlayView != null && windowManager != null) {
-            windowManager.removeView(overlayView);
-        }
+        windowManager.removeView(overlayView);
+        LogFileWriter.logInfo(this, "AlarmOverlayService", "Overlay view removed");
     }
 
     @Override
