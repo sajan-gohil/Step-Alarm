@@ -68,7 +68,9 @@ public class AlarmReceiver extends BroadcastReceiver {
         }
         
         if (!alarm.isEnabled()) {
-            LogFileWriter.logInfo(context, TAG, "Alarm is disabled, ignoring");
+            LogFileWriter.logInfo(context, TAG, "Alarm is disabled, cancelling all pending alarms");
+            // Cancel any remaining scheduled alarms for this alarm
+            AlarmScheduler.cancelAlarm(context, alarm);
             return;
         }
 
@@ -78,8 +80,14 @@ public class AlarmReceiver extends BroadcastReceiver {
             LogFileWriter.logInfo(context, TAG, "Deleted one-time alarm");
         } else {
             // Reschedule repeating alarm for next occurrence
-            AlarmScheduler.scheduleAlarm(context, alarm);
-            LogFileWriter.logInfo(context, TAG, "Rescheduled repeating alarm");
+            // Re-fetch alarm to ensure we have the latest state
+            Alarm currentAlarm = alarmDatabase.getAlarm(alarmId);
+            if (currentAlarm != null && currentAlarm.isEnabled()) {
+                AlarmScheduler.scheduleAlarm(context, currentAlarm);
+                LogFileWriter.logInfo(context, TAG, "Rescheduled repeating alarm");
+            } else {
+                LogFileWriter.logInfo(context, TAG, "Alarm was disabled, not rescheduling");
+            }
         }
 
         isAlarmActive = true;

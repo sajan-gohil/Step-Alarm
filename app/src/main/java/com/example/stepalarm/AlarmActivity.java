@@ -20,6 +20,7 @@ public class AlarmActivity extends Activity {
     private static final int REQUIRED_STEPS = 10;
     private static final long UPDATE_INTERVAL = 100; // Update every 100ms
     private static final int OVERLAY_PERMISSION_REQ_CODE = 1234;
+    private boolean permissionRequested = false;
 
     private StepCounterService stepCounterService;
     private boolean isBound = false;
@@ -55,6 +56,10 @@ public class AlarmActivity extends Activity {
         LogFileWriter.logInfo(this, TAG, "=== AlarmActivity.onCreate() called ===");
         super.onCreate(savedInstanceState);
 
+        if (savedInstanceState != null) {
+            permissionRequested = savedInstanceState.getBoolean("permission_requested", false);
+        }
+
         setContentView(R.layout.activity_alarm);
         LogFileWriter.logInfo(this, TAG, "Layout set successfully");
 
@@ -76,10 +81,13 @@ public class AlarmActivity extends Activity {
 
         // Check for overlay permission
         if (!Settings.canDrawOverlays(this)) {
-            LogFileWriter.logWarning(this, TAG, "Overlay permission not granted");
-            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName()));
-            startActivityForResult(intent, OVERLAY_PERMISSION_REQ_CODE);
+            if (!permissionRequested) {
+                LogFileWriter.logWarning(this, TAG, "Overlay permission not granted");
+                Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                startActivityForResult(intent, OVERLAY_PERMISSION_REQ_CODE);
+                permissionRequested = true;
+            }
         } else {
             LogFileWriter.logInfo(this, TAG, "Overlay permission granted, starting overlay service");
             startOverlayService();
@@ -106,11 +114,23 @@ public class AlarmActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == OVERLAY_PERMISSION_REQ_CODE) {
             if (Settings.canDrawOverlays(this)) {
-                startOverlayService();
+                Toast.makeText(this, "Overlay permission granted. Restarting app...", Toast.LENGTH_SHORT).show();
+                // Restart the app to ensure permission changes take effect
+                restartApp();
             } else {
                 Toast.makeText(this, "Overlay permission is required for the alarm", Toast.LENGTH_LONG).show();
             }
         }
+    }
+
+    private void restartApp() {
+        // Restart the app to ensure permission changes take effect
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+        finish();
+        // Force process restart
+        android.os.Process.killProcess(android.os.Process.myPid());
     }
 
     private void startStepCountUpdates() {
@@ -187,14 +207,29 @@ public class AlarmActivity extends Activity {
     }
 
     @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean("permission_requested", permissionRequested);
+    }
+
+    @Override
     protected void onDestroy() {
         LogFileWriter.logInfo(this, TAG, "=== AlarmActivity.onDestroy() called ===");
         super.onDestroy();
         stopStepCountUpdates();
+        
+        // Stop the alarm sound and vibration directly
+        AlarmReceiver.stopAlarm(this);
+        LogFileWriter.logInfo(this, TAG, "AlarmReceiver.stopAlarm() called from onDestroy");
+        
         if (isBound) {
             unbindService(serviceConnection);
             isBound = false;
         }
         stopService(new Intent(this, AlarmOverlayService.class));
+        
+        // Also stop the StepCounterService
+        stopService(new Intent(this, StepCounterService.class));
+        LogFileWriter.logInfo(this, TAG, "StepCounterService stopped");
     }
 }

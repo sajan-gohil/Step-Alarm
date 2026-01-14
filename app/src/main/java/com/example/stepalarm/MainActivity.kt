@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var addAlarmButton: FloatingActionButton
     private lateinit var alarmAdapter: AlarmAdapter
     private lateinit var alarmDatabase: AlarmDatabase
+    private var isReturningFromPermissionSettings = false
 
     private val addAlarmLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
@@ -35,9 +36,12 @@ class MainActivity : AppCompatActivity() {
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        isReturningFromPermissionSettings = true
         // Check permission again after returning from settings
         if (Settings.canDrawOverlays(this)) {
             Toast.makeText(this, getString(R.string.overlay_permission_granted), Toast.LENGTH_SHORT).show()
+            // Restart the app to ensure the permission is properly recognized
+            restartApp()
         } else {
             // Permission still not granted, show info dialog
             showOverlayPermissionDialog()
@@ -206,10 +210,24 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Re-check permissions in case they were revoked
-        checkOverlayPermission()
-        checkActivityRecognitionPermission()
+        // Only re-check permissions if not returning from permission settings
+        // to avoid showing permission dialog again after granting
+        if (!isReturningFromPermissionSettings) {
+            checkOverlayPermission()
+            checkActivityRecognitionPermission()
+        }
+        isReturningFromPermissionSettings = false
         loadAlarms()
+    }
+
+    private fun restartApp() {
+        // Restart the app to ensure permission changes take effect
+        val intent = Intent(this, MainActivity::class.java)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        startActivity(intent)
+        finish()
+        // Force process restart
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     private fun loadAlarms() {

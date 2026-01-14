@@ -14,6 +14,9 @@ class AlarmAdapter(
     private val onDelete: (Alarm) -> Unit
 ) : RecyclerView.Adapter<AlarmAdapter.AlarmViewHolder>() {
     
+    // Flag to prevent listener callbacks during binding
+    private var isBinding = false
+    
     class AlarmViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val timeText: TextView = itemView.findViewById(R.id.alarmTimeText)
         val repeatText: TextView = itemView.findViewById(R.id.alarmRepeatText)
@@ -32,11 +35,19 @@ class AlarmAdapter(
         
         holder.timeText.text = alarm.getTimeString()
         holder.repeatText.text = alarm.getRepeatDaysString()
-        holder.enabledSwitch.isChecked = alarm.isEnabled
         
+        // Use flag to prevent listener from firing during binding
+        isBinding = true
+        holder.enabledSwitch.isChecked = alarm.isEnabled
+        isBinding = false
+        
+        // Set listener - will check isBinding flag to avoid callback during layout
         holder.enabledSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked != alarm.isEnabled) {
-                onToggleEnabled(alarm)
+            if (!isBinding && isChecked != alarm.isEnabled) {
+                // Post to handler to ensure we're not in layout phase
+                holder.itemView.post {
+                    onToggleEnabled(alarm)
+                }
             }
         }
         
