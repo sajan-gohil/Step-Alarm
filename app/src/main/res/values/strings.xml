@@ -18,4 +18,7 @@
     <string name="activity_recognition_permission_title">Activity Recognition Permission Required</string>
     <string name="activity_recognition_permission_message">This app needs permission to recognize physical activity (like steps) to count steps when the alarm goes off. Please grant this permission for the alarm to work properly.</string>
     <string name="activity_recognition_permission_granted">Activity recognition permission granted! Step counting will now work.</string>
+    <string name="update_available_title">Update Available</string>
+    <string name="update_available_message">A new version of Step Alarm is available. Please update to continue using the latest features and improvements.</string>
+    <string name="update_now">Update Now</string>
 </resources> 

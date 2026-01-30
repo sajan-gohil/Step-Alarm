@@ -19,6 +19,7 @@
             android:layout_height="wrap_content"
             android:text="@string/set_alarm_time"
             android:textSize="24sp"
+            android:layout_marginTop="32dp"
             android:layout_marginBottom="32dp"
             android:layout_gravity="center_horizontal"/>
 
@@ -127,7 +128,15 @@
             android:text="@string/save_alarm"
             android:layout_marginTop="40dp"
             android:layout_marginStart="8dp"
-            android:layout_marginEnd="8dp"/>
+            android:layout_marginEnd="8dp"
+            android:backgroundTint="#F4B342"
+            android:drawableStart="@drawable/ic_add_custom"
+            android:drawablePadding="8dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:textColor="#DE1A58"/>
 
     </LinearLayout>
 

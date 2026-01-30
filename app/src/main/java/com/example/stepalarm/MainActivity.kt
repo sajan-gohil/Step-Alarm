@@ -18,6 +18,10 @@ import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateInfo
+import com.google.android.play.core.install.model.UpdateAvailability
+import com.google.android.play.core.install.model.AppUpdateType as PlayCoreAppUpdateType
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
@@ -26,6 +30,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var alarmAdapter: AlarmAdapter
     private lateinit var alarmDatabase: AlarmDatabase
     private var isReturningFromPermissionSettings = false
+
+    private val IN_APP_UPDATE_REQUEST_CODE = 1234
+    private val appUpdateManager by lazy { AppUpdateManagerFactory.create(this) }
 
     private val addAlarmLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
@@ -63,6 +70,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        checkForAppUpdate()
         alarmDatabase = AlarmDatabase(this)
         alarmsRecyclerView = findViewById(R.id.alarmsRecyclerView)
         addAlarmButton = findViewById(R.id.addAlarmButton)
@@ -252,4 +260,58 @@ class MainActivity : AppCompatActivity() {
         alarmDatabase.deleteAlarm(alarm.id)
         loadAlarms()
     }
-} 
+    /**
+     * In-app update logic: check for updates and prompt user if needed
+     */
+    private fun checkForAppUpdate() {
+        val appUpdateInfoTask = appUpdateManager.appUpdateInfo
+        appUpdateInfoTask.addOnSuccessListener { appUpdateInfo ->
+            if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE) {
+                // Try immediate update first
+                if (appUpdateInfo.isUpdateTypeAllowed(PlayCoreAppUpdateType.IMMEDIATE)) {
+                    // Start immediate update flow
+                    try {
+                        appUpdateManager.startUpdateFlowForResult(
+                            appUpdateInfo,
+                            PlayCoreAppUpdateType.IMMEDIATE,
+                            this,
+                            IN_APP_UPDATE_REQUEST_CODE
+                        )
+                    } catch (e: Exception) {
+                        // Fallback: show dialog to go to Play Store
+                        showUpdateDialog()
+                    }
+                } else {
+                    // Immediate update not allowed, show dialog
+                    showUpdateDialog()
+                }
+            }
+        }
+    }
+
+    private fun showUpdateDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_available_title))
+            .setMessage(getString(R.string.update_available_message))
+            .setCancelable(false)
+            .setPositiveButton(getString(R.string.update_now)) { _, _ ->
+                // Open Google Play Store for this app
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$packageName"))
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                finish()
+            }
+            .show()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        // Handle update flow result
+        if (requestCode == IN_APP_UPDATE_REQUEST_CODE) {
+            if (resultCode != RESULT_OK) {
+                // Update flow failed or canceled, show dialog
+                showUpdateDialog()
+            }
+        }
+    }
+}
