@@ -24,5 +24,9 @@
         android:id="@+id/view_logs"
         android:title="View Logs"
         app:showAsAction="never" />
+    <item
+        android:id="@+id/how_to_use"
+        android:title="@string/how_to_use"
+        app:showAsAction="never" />
 </menu>
 

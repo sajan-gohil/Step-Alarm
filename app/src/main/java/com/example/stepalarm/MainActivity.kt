@@ -165,6 +165,10 @@ class MainActivity : AppCompatActivity() {
 
             LogFileWriter.logInfo(this, TAG, "Loading alarms")
             loadAlarms()
+
+            // Show instructions on first launch
+            InstructionsHelper.showOnFirstLaunch(this)
+
             LogFileWriter.logInfo(this, TAG, "=== MainActivity.onCreate() COMPLETED ===")
         } catch (e: Exception) {
             LogFileWriter.logError(this, TAG, "FATAL: onCreate() crashed", e)
@@ -197,6 +201,10 @@ class MainActivity : AppCompatActivity() {
             }
             R.id.theme_pure_white -> {
                 switchPalette(ThemeManager.PALETTE_PURE_WHITE)
+                true
+            }
+            R.id.how_to_use -> {
+                InstructionsHelper.show(this)
                 true
             }
             else -> super.onOptionsItemSelected(item)
