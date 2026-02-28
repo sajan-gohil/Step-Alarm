@@ -5,13 +5,21 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
+import android.view.View;
 import android.view.WindowManager;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.Animation;
+import android.view.animation.AnimationSet;
+import android.view.animation.ScaleAnimation;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -78,6 +86,16 @@ public class AlarmActivity extends Activity {
         remainingStepsText = findViewById(R.id.remainingStepsText);
         LogFileWriter.logInfo(this, TAG, "TextViews found successfully");
 
+        // Apply color palette
+        applyTheme();
+
+        // Entrance animation for the alarm screen
+        View rootView = findViewById(android.R.id.content);
+        if (rootView != null) {
+            rootView.setAlpha(0f);
+            rootView.animate().alpha(1f).setDuration(350).start();
+        }
+
         handler = new Handler(Looper.getMainLooper());
         LogFileWriter.logInfo(this, TAG, "Handler created");
 
@@ -109,6 +127,47 @@ public class AlarmActivity extends Activity {
         Intent intent = new Intent(this, AlarmOverlayService.class);
         startService(intent);
         LogFileWriter.logInfo(this, TAG, "AlarmOverlayService started");
+    }
+
+    private void applyTheme() {
+        ThemeManager.Palette palette = ThemeManager.INSTANCE.getSelectedPalette(this);
+
+        // Root background
+        LinearLayout rootLayout = (LinearLayout) ((android.view.ViewGroup) findViewById(android.R.id.content)).getChildAt(0);
+        if (rootLayout != null) {
+            rootLayout.setBackgroundColor(palette.getBackground());
+        }
+
+        // Status bar & navigation bar
+        getWindow().setStatusBarColor(palette.getStatusBar());
+        getWindow().setNavigationBarColor(palette.getBackground());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            int flags = getWindow().getDecorView().getSystemUiVisibility();
+            double r = Color.red(palette.getStatusBar()) / 255.0;
+            double g = Color.green(palette.getStatusBar()) / 255.0;
+            double b = Color.blue(palette.getStatusBar()) / 255.0;
+            double luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (luminance > 0.5) {
+                getWindow().getDecorView().setSystemUiVisibility(flags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            } else {
+                getWindow().getDecorView().setSystemUiVisibility(flags & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            }
+        }
+
+        // All text views in the layout
+        if (rootLayout != null) {
+            for (int i = 0; i < rootLayout.getChildCount(); i++) {
+                View child = rootLayout.getChildAt(i);
+                if (child instanceof TextView) {
+                    TextView tv = (TextView) child;
+                    if (child.getId() == R.id.stepCountText || child.getId() == R.id.remainingStepsText) {
+                        tv.setTextColor(palette.getAccent());
+                    } else {
+                        tv.setTextColor(palette.getTextPrimary());
+                    }
+                }
+            }
+        }
     }
 
     @Override

@@ -8,6 +8,7 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 public class AlarmOverlayService extends Service {
@@ -78,12 +79,41 @@ public class AlarmOverlayService extends Service {
             stepCountText = overlayView.findViewById(R.id.stepCountText);
             remainingStepsText = overlayView.findViewById(R.id.remainingStepsText);
 
+            // Apply theme colors to overlay
+            applyThemeToOverlay();
+
             windowManager.addView(overlayView, params);
             overlayAdded = true;
             LogFileWriter.logInfo(this, TAG, "Overlay view created and added successfully");
         } catch (Exception e) {
             LogFileWriter.logError(this, TAG, "Failed to create overlay view", e);
             overlayAdded = false;
+        }
+    }
+
+    private void applyThemeToOverlay() {
+        if (overlayView == null) return;
+        try {
+            ThemeManager.Palette palette = ThemeManager.INSTANCE.getSelectedPalette(this);
+            overlayView.setBackgroundColor(palette.getOverlayBackground());
+
+            // Set text colors for the overlay title and step texts
+            if (overlayView instanceof LinearLayout) {
+                LinearLayout layout = (LinearLayout) overlayView;
+                for (int i = 0; i < layout.getChildCount(); i++) {
+                    View child = layout.getChildAt(i);
+                    if (child instanceof TextView) {
+                        TextView tv = (TextView) child;
+                        if (tv.getId() == R.id.stepCountText || tv.getId() == R.id.remainingStepsText) {
+                            tv.setTextColor(palette.getAccent());
+                        } else {
+                            tv.setTextColor(palette.getTextPrimary());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LogFileWriter.logError(this, TAG, "Failed to apply theme to overlay", e);
         }
     }
 

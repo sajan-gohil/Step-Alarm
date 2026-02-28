@@ -22,4 +22,9 @@
     <string name="update_available_message">A new version of Step Alarm is available. Please update to continue using the latest features and improvements.</string>
     <string name="update_now">Update Now</string>
     <string name="send_feedback">Send Feedback</string>
+    <string name="color_theme">Color Theme</string>
+    <string name="theme_soothing_dawn">🌅 Soothing Dawn</string>
+    <string name="theme_material_deep_dark">🌑 Material Deep Dark</string>
+    <string name="theme_sunset_alarm">🌇 Sunset Alarm</string>
+    <string name="theme_pure_white">☀️ Pure White</string>
 </resources> 

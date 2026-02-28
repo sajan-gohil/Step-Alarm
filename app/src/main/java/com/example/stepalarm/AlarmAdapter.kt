@@ -1,10 +1,13 @@
 package com.example.stepalarm
 
+import android.content.res.ColorStateList
+import android.graphics.PorterDuff
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.TextView
+import com.google.android.material.card.MaterialCardView
 import com.google.android.material.switchmaterial.SwitchMaterial
 import androidx.recyclerview.widget.RecyclerView
 
@@ -18,6 +21,7 @@ class AlarmAdapter(
     private var isBinding = false
     
     class AlarmViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        val cardView: MaterialCardView = itemView as MaterialCardView
         val timeText: TextView = itemView.findViewById(R.id.alarmTimeText)
         val repeatText: TextView = itemView.findViewById(R.id.alarmRepeatText)
         val enabledSwitch: SwitchMaterial = itemView.findViewById(R.id.alarmEnabledSwitch)
@@ -32,10 +36,33 @@ class AlarmAdapter(
     
     override fun onBindViewHolder(holder: AlarmViewHolder, position: Int) {
         val alarm = alarms[position]
+        val palette = ThemeManager.getSelectedPalette(holder.itemView.context)
         
         holder.timeText.text = alarm.getTimeString()
         holder.repeatText.text = alarm.getRepeatDaysString()
         
+        // Apply palette colors to card
+        holder.cardView.setCardBackgroundColor(palette.cardBackground)
+        holder.cardView.strokeColor = palette.cardStroke
+
+        // Text colors
+        holder.timeText.setTextColor(palette.textPrimary)
+        holder.repeatText.setTextColor(palette.subtleAccent)
+
+        // Switch track and thumb colors
+        val trackStates = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(palette.switchTrackOn, palette.switchTrackOff)
+        )
+        holder.enabledSwitch.trackTintList = trackStates
+        holder.enabledSwitch.thumbTintList = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(palette.accent, palette.subtleAccent)
+        )
+
+        // Delete button tint
+        holder.deleteButton.setColorFilter(palette.subtleAccent, PorterDuff.Mode.SRC_IN)
+
         // Use flag to prevent listener from firing during binding
         isBinding = true
         holder.enabledSwitch.isChecked = alarm.isEnabled
@@ -52,8 +79,30 @@ class AlarmAdapter(
         }
         
         holder.deleteButton.setOnClickListener {
-            onDelete(alarm)
+            // Animate the delete action
+            holder.cardView.animate()
+                .alpha(0f)
+                .scaleX(0.9f)
+                .scaleY(0.9f)
+                .setDuration(200)
+                .withEndAction {
+                    onDelete(alarm)
+                    holder.cardView.alpha = 1f
+                    holder.cardView.scaleX = 1f
+                    holder.cardView.scaleY = 1f
+                }
+                .start()
         }
+
+        // Entrance animation for items
+        holder.itemView.alpha = 0f
+        holder.itemView.translationY = 30f
+        holder.itemView.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(250)
+            .setStartDelay((position * 50).toLong().coerceAtMost(300))
+            .start()
     }
     
     override fun getItemCount(): Int = alarms.size

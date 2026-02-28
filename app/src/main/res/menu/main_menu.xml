@@ -2,6 +2,25 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <item
+        android:id="@+id/color_theme"
+        android:title="@string/color_theme"
+        app:showAsAction="never">
+        <menu>
+            <item
+                android:id="@+id/theme_soothing_dawn"
+                android:title="@string/theme_soothing_dawn" />
+            <item
+                android:id="@+id/theme_material_deep_dark"
+                android:title="@string/theme_material_deep_dark" />
+            <item
+                android:id="@+id/theme_sunset_alarm"
+                android:title="@string/theme_sunset_alarm" />
+            <item
+                android:id="@+id/theme_pure_white"
+                android:title="@string/theme_pure_white" />
+        </menu>
+    </item>
+    <item
         android:id="@+id/view_logs"
         android:title="View Logs"
         app:showAsAction="never" />

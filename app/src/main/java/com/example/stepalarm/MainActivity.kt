@@ -1,21 +1,30 @@
 package com.example.stepalarm
 
 import android.Manifest
+import android.animation.ArgbEvaluator
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -32,6 +41,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var alarmAdapter: AlarmAdapter
     private lateinit var alarmDatabase: AlarmDatabase
     private var isReturningFromPermissionSettings = false
+    private lateinit var rootView: View
+    private lateinit var toolbar: MaterialToolbar
+    private lateinit var appBarLayout: AppBarLayout
+    private lateinit var myAlarmsText: android.widget.TextView
 
     private val IN_APP_UPDATE_REQUEST_CODE = 1234
     private val appUpdateManager by lazy { AppUpdateManagerFactory.create(this) }
@@ -77,9 +90,13 @@ class MainActivity : AppCompatActivity() {
             setContentView(R.layout.activity_main)
             LogFileWriter.logInfo(this, TAG, "setContentView completed")
 
-            val toolbar = findViewById<MaterialToolbar>(R.id.topAppBar)
+            toolbar = findViewById(R.id.topAppBar)
             setSupportActionBar(toolbar)
             LogFileWriter.logInfo(this, TAG, "Toolbar set up")
+
+            rootView = findViewById(R.id.mainContentArea)
+            appBarLayout = findViewById(R.id.appBarLayout)
+            myAlarmsText = findViewById(R.id.myAlarmsTitle)
 
             try {
                 checkForAppUpdate()
@@ -107,19 +124,38 @@ class MainActivity : AppCompatActivity() {
 
             alarmsRecyclerView.layoutManager = LinearLayoutManager(this)
             alarmsRecyclerView.adapter = alarmAdapter
+
+            // Smooth item animations for RecyclerView
+            val itemAnimator = DefaultItemAnimator()
+            itemAnimator.addDuration = 250
+            itemAnimator.removeDuration = 250
+            itemAnimator.changeDuration = 200
+            itemAnimator.moveDuration = 200
+            alarmsRecyclerView.itemAnimator = itemAnimator
             LogFileWriter.logInfo(this, TAG, "RecyclerView set up")
 
             addAlarmButton.setOnClickListener {
                 LogFileWriter.logInfo(this, TAG, "Add alarm button clicked")
-                val intent = Intent(this, AddAlarmActivity::class.java)
-                addAlarmLauncher.launch(intent)
+                // Scale animation on click
+                it.animate().scaleX(0.9f).scaleY(0.9f).setDuration(100).withEndAction {
+                    it.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                    val intent = Intent(this, AddAlarmActivity::class.java)
+                    addAlarmLauncher.launch(intent)
+                    overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                }.start()
             }
 
             feedbackButton = findViewById(R.id.feedbackButton)
             feedbackButton.setOnClickListener {
-                sendFeedbackWithLogs()
+                it.animate().scaleX(0.95f).scaleY(0.95f).setDuration(80).withEndAction {
+                    it.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
+                    sendFeedbackWithLogs()
+                }.start()
             }
             LogFileWriter.logInfo(this, TAG, "Buttons set up")
+
+            // Apply the saved color palette
+            applyTheme()
 
             // Check for required permissions
             LogFileWriter.logInfo(this, TAG, "Checking overlay permission")
@@ -147,8 +183,140 @@ class MainActivity : AppCompatActivity() {
                 viewLogs()
                 true
             }
+            R.id.theme_soothing_dawn -> {
+                switchPalette(ThemeManager.PALETTE_SOOTHING_DAWN)
+                true
+            }
+            R.id.theme_material_deep_dark -> {
+                switchPalette(ThemeManager.PALETTE_MATERIAL_DEEP_DARK)
+                true
+            }
+            R.id.theme_sunset_alarm -> {
+                switchPalette(ThemeManager.PALETTE_SUNSET_ALARM)
+                true
+            }
+            R.id.theme_pure_white -> {
+                switchPalette(ThemeManager.PALETTE_PURE_WHITE)
+                true
+            }
             else -> super.onOptionsItemSelected(item)
         }
+    }
+
+    private fun switchPalette(paletteKey: String) {
+        val currentKey = ThemeManager.getSelectedPaletteKey(this)
+        if (currentKey == paletteKey) return
+
+        ThemeManager.setSelectedPalette(this, paletteKey)
+        applyThemeAnimated()
+        // Also notify the adapter to rebind with new colors
+        alarmAdapter.notifyDataSetChanged()
+        Toast.makeText(this, "Theme: ${ThemeManager.getPalette(paletteKey).name}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun applyTheme() {
+        val palette = ThemeManager.getSelectedPalette(this)
+
+        // Window / status bar
+        window.statusBarColor = palette.statusBar
+        window.navigationBarColor = palette.background
+
+        // Background
+        rootView.setBackgroundColor(palette.background)
+
+        // Toolbar
+        toolbar.setBackgroundColor(palette.toolbarBackground)
+        toolbar.setTitleTextColor(palette.toolbarText)
+        toolbar.setNavigationIconTint(palette.toolbarText)
+        // Overflow icon color
+        toolbar.overflowIcon?.setTint(palette.toolbarText)
+        appBarLayout.setBackgroundColor(palette.toolbarBackground)
+
+        // My Alarms title
+        myAlarmsText.setTextColor(palette.textPrimary)
+
+        // FABs
+        addAlarmButton.backgroundTintList = ColorStateList.valueOf(palette.fabBackground)
+        addAlarmButton.imageTintList = ColorStateList.valueOf(palette.fabIcon)
+        feedbackButton.backgroundTintList = ColorStateList.valueOf(palette.fabBackground)
+        feedbackButton.setTextColor(palette.fabIcon)
+        feedbackButton.iconTint = ColorStateList.valueOf(palette.fabIcon)
+
+        // Decor view for light/dark status bar icons
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val flags = window.decorView.systemUiVisibility
+            if (isLightColor(palette.statusBar)) {
+                window.decorView.systemUiVisibility = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            } else {
+                window.decorView.systemUiVisibility = flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+            }
+        }
+    }
+
+    private fun applyThemeAnimated() {
+        val palette = ThemeManager.getSelectedPalette(this)
+
+        val oldBg = (rootView.background as? ColorDrawable)?.color ?: Color.WHITE
+        val newBg = palette.background
+
+        // Animate background color transition
+        val bgAnimator = ValueAnimator.ofObject(ArgbEvaluator(), oldBg, newBg)
+        bgAnimator.duration = 400
+        bgAnimator.interpolator = DecelerateInterpolator()
+        bgAnimator.addUpdateListener { animator ->
+            val color = animator.animatedValue as Int
+            rootView.setBackgroundColor(color)
+        }
+        bgAnimator.start()
+
+        val oldToolbar = (toolbar.background as? ColorDrawable)?.color ?: Color.WHITE
+        val toolbarAnimator = ValueAnimator.ofObject(ArgbEvaluator(), oldToolbar, palette.toolbarBackground)
+        toolbarAnimator.duration = 400
+        toolbarAnimator.interpolator = DecelerateInterpolator()
+        toolbarAnimator.addUpdateListener { animator ->
+            val color = animator.animatedValue as Int
+            toolbar.setBackgroundColor(color)
+            appBarLayout.setBackgroundColor(color)
+        }
+        toolbarAnimator.start()
+
+        // Status bar
+        val statusAnimator = ValueAnimator.ofObject(ArgbEvaluator(), window.statusBarColor, palette.statusBar)
+        statusAnimator.duration = 400
+        statusAnimator.addUpdateListener { animator ->
+            window.statusBarColor = animator.animatedValue as Int
+        }
+        statusAnimator.start()
+        window.navigationBarColor = palette.background
+
+        // Text and other elements (immediate but with fadeIn)
+        toolbar.setTitleTextColor(palette.toolbarText)
+        toolbar.setNavigationIconTint(palette.toolbarText)
+        toolbar.overflowIcon?.setTint(palette.toolbarText)
+        myAlarmsText.setTextColor(palette.textPrimary)
+
+        addAlarmButton.backgroundTintList = ColorStateList.valueOf(palette.fabBackground)
+        addAlarmButton.imageTintList = ColorStateList.valueOf(palette.fabIcon)
+        feedbackButton.backgroundTintList = ColorStateList.valueOf(palette.fabBackground)
+        feedbackButton.setTextColor(palette.fabIcon)
+        feedbackButton.iconTint = ColorStateList.valueOf(palette.fabIcon)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val flags = window.decorView.systemUiVisibility
+            if (isLightColor(palette.statusBar)) {
+                window.decorView.systemUiVisibility = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            } else {
+                window.decorView.systemUiVisibility = flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+            }
+        }
+    }
+
+    private fun isLightColor(color: Int): Boolean {
+        val r = Color.red(color) / 255.0
+        val g = Color.green(color) / 255.0
+        val b = Color.blue(color) / 255.0
+        val luminance = 0.299 * r + 0.587 * g + 0.114 * b
+        return luminance > 0.5
     }
 
     private fun viewLogs() {
@@ -261,6 +429,7 @@ class MainActivity : AppCompatActivity() {
             checkActivityRecognitionPermission()
         }
         isReturningFromPermissionSettings = false
+        applyTheme()
         loadAlarms()
     }
 
