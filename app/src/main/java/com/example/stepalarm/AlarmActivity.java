@@ -28,6 +28,8 @@ public class AlarmActivity extends Activity {
     private TextView remainingStepsText;
     private Handler handler;
     private Runnable updateRunnable;
+    private long lastUpdateLogTime = 0;
+    private static final long UPDATE_LOG_INTERVAL = 2000; // Log step updates every 2 seconds
 
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -154,14 +156,18 @@ public class AlarmActivity extends Activity {
 
     private void updateStepCount() {
         if (stepCounterService == null) {
-            LogFileWriter.logWarning(this, TAG, "updateStepCount called but stepCounterService is null");
             return;
         }
 
         long steps = stepCounterService.getStepCount();
         long remaining = REQUIRED_STEPS - steps;
 
-        LogFileWriter.logInfo(this, TAG, "updateStepCount called, steps: " + steps + ", remaining: " + remaining);
+        // Rate-limit logging to avoid flooding log file
+        long now = System.currentTimeMillis();
+        if (now - lastUpdateLogTime >= UPDATE_LOG_INTERVAL) {
+            lastUpdateLogTime = now;
+            LogFileWriter.logInfo(this, TAG, "Step update: steps=" + steps + ", remaining=" + remaining);
+        }
 
         stepCountText.setText("Steps taken: " + steps);
         remainingStepsText.setText("Steps remaining: " + remaining);

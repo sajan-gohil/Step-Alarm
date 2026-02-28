@@ -4,8 +4,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
-import android.widget.Switch
 import android.widget.TextView
+import com.google.android.material.switchmaterial.SwitchMaterial
 import androidx.recyclerview.widget.RecyclerView
 
 class AlarmAdapter(
@@ -20,7 +20,7 @@ class AlarmAdapter(
     class AlarmViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val timeText: TextView = itemView.findViewById(R.id.alarmTimeText)
         val repeatText: TextView = itemView.findViewById(R.id.alarmRepeatText)
-        val enabledSwitch: Switch = itemView.findViewById(R.id.alarmEnabledSwitch)
+        val enabledSwitch: SwitchMaterial = itemView.findViewById(R.id.alarmEnabledSwitch)
         val deleteButton: ImageButton = itemView.findViewById(R.id.deleteAlarmButton)
     }
     

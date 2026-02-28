@@ -14,19 +14,21 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
 import com.google.android.play.core.appupdate.AppUpdateInfo
 import com.google.android.play.core.install.model.UpdateAvailability
 import com.google.android.play.core.install.model.AppUpdateType as PlayCoreAppUpdateType
-import java.io.File
 
 class MainActivity : AppCompatActivity() {
+    private val TAG = "MainActivity"
     private lateinit var alarmsRecyclerView: RecyclerView
     private lateinit var addAlarmButton: FloatingActionButton
+    private lateinit var feedbackButton: ExtendedFloatingActionButton
     private lateinit var alarmAdapter: AlarmAdapter
     private lateinit var alarmDatabase: AlarmDatabase
     private var isReturningFromPermissionSettings = false
@@ -67,37 +69,71 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        LogFileWriter.logInfo(this, TAG, "=== MainActivity.onCreate() START ===")
+        try {
+            super.onCreate(savedInstanceState)
+            LogFileWriter.logInfo(this, TAG, "super.onCreate() completed")
 
-        checkForAppUpdate()
-        alarmDatabase = AlarmDatabase(this)
-        alarmsRecyclerView = findViewById(R.id.alarmsRecyclerView)
-        addAlarmButton = findViewById(R.id.addAlarmButton)
+            setContentView(R.layout.activity_main)
+            LogFileWriter.logInfo(this, TAG, "setContentView completed")
 
-        alarmAdapter = AlarmAdapter(
-            alarms = emptyList(),
-            onToggleEnabled = { alarm ->
-                toggleAlarm(alarm)
-            },
-            onDelete = { alarm ->
-                deleteAlarm(alarm)
+            val toolbar = findViewById<MaterialToolbar>(R.id.topAppBar)
+            setSupportActionBar(toolbar)
+            LogFileWriter.logInfo(this, TAG, "Toolbar set up")
+
+            try {
+                checkForAppUpdate()
+                LogFileWriter.logInfo(this, TAG, "checkForAppUpdate completed")
+            } catch (e: Exception) {
+                LogFileWriter.logError(this, TAG, "checkForAppUpdate failed (non-fatal)", e)
             }
-        )
 
-        alarmsRecyclerView.layoutManager = LinearLayoutManager(this)
-        alarmsRecyclerView.adapter = alarmAdapter
+            alarmDatabase = AlarmDatabase(this)
+            LogFileWriter.logInfo(this, TAG, "AlarmDatabase initialized")
 
-        addAlarmButton.setOnClickListener {
-            val intent = Intent(this, AddAlarmActivity::class.java)
-            addAlarmLauncher.launch(intent)
+            alarmsRecyclerView = findViewById(R.id.alarmsRecyclerView)
+            addAlarmButton = findViewById(R.id.addAlarmButton)
+            LogFileWriter.logInfo(this, TAG, "Views found")
+
+            alarmAdapter = AlarmAdapter(
+                alarms = emptyList(),
+                onToggleEnabled = { alarm ->
+                    toggleAlarm(alarm)
+                },
+                onDelete = { alarm ->
+                    deleteAlarm(alarm)
+                }
+            )
+
+            alarmsRecyclerView.layoutManager = LinearLayoutManager(this)
+            alarmsRecyclerView.adapter = alarmAdapter
+            LogFileWriter.logInfo(this, TAG, "RecyclerView set up")
+
+            addAlarmButton.setOnClickListener {
+                LogFileWriter.logInfo(this, TAG, "Add alarm button clicked")
+                val intent = Intent(this, AddAlarmActivity::class.java)
+                addAlarmLauncher.launch(intent)
+            }
+
+            feedbackButton = findViewById(R.id.feedbackButton)
+            feedbackButton.setOnClickListener {
+                sendFeedbackWithLogs()
+            }
+            LogFileWriter.logInfo(this, TAG, "Buttons set up")
+
+            // Check for required permissions
+            LogFileWriter.logInfo(this, TAG, "Checking overlay permission")
+            checkOverlayPermission()
+            LogFileWriter.logInfo(this, TAG, "Checking activity recognition permission")
+            checkActivityRecognitionPermission()
+
+            LogFileWriter.logInfo(this, TAG, "Loading alarms")
+            loadAlarms()
+            LogFileWriter.logInfo(this, TAG, "=== MainActivity.onCreate() COMPLETED ===")
+        } catch (e: Exception) {
+            LogFileWriter.logError(this, TAG, "FATAL: onCreate() crashed", e)
+            throw e
         }
-
-        // Check for required permissions
-        checkOverlayPermission()
-        checkActivityRecognitionPermission()
-
-        loadAlarms()
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
@@ -117,15 +153,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun viewLogs() {
         try {
-            val logFile = LogFileWriter.getLogFile(this)
-            if (logFile.exists() && logFile.length() > 0) {
-                val logContent = logFile.readText()
+            val logContent = LogFileWriter.readLogContent(this)
+            if (logContent.isNotEmpty()) {
                 AlertDialog.Builder(this)
                     .setTitle("App Logs")
                     .setMessage(logContent.takeLast(5000)) // Show last 5000 characters
                     .setPositiveButton("OK", null)
                     .setNeutralButton("Share") { _, _ ->
-                        shareLogFile(logFile)
+                        shareLogFile()
                     }
                     .show()
             } else {
@@ -136,13 +171,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun shareLogFile(logFile: File) {
+    private fun shareLogFile() {
         try {
-            val uri = FileProvider.getUriForFile(
-                this,
-                "${packageName}.fileprovider",
-                logFile
-            )
+            val uri = LogFileWriter.getLogFileUri(this)
+            if (uri == null) {
+                Toast.makeText(this, "No log file available", Toast.LENGTH_SHORT).show()
+                return
+            }
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -217,6 +252,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onResume() {
+        LogFileWriter.logInfo(this, TAG, "=== MainActivity.onResume() ===")
         super.onResume()
         // Only re-check permissions if not returning from permission settings
         // to avoid showing permission dialog again after granting
@@ -226,6 +262,11 @@ class MainActivity : AppCompatActivity() {
         }
         isReturningFromPermissionSettings = false
         loadAlarms()
+    }
+
+    override fun onDestroy() {
+        LogFileWriter.logInfo(this, TAG, "=== MainActivity.onDestroy() ===")
+        super.onDestroy()
     }
 
     private fun restartApp() {
@@ -239,26 +280,70 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadAlarms() {
-        val alarms = alarmDatabase.getAllAlarms().sortedBy { it.hour * 60 + it.minute }
-        alarmAdapter.updateAlarms(alarms)
+        try {
+            val alarms = alarmDatabase.getAllAlarms().sortedBy { it.hour * 60 + it.minute }
+            LogFileWriter.logInfo(this, TAG, "Loaded ${alarms.size} alarms")
+            alarmAdapter.updateAlarms(alarms)
+        } catch (e: Exception) {
+            LogFileWriter.logError(this, TAG, "Failed to load alarms", e)
+        }
     }
 
     private fun toggleAlarm(alarm: Alarm) {
-        val updatedAlarm = alarmDatabase.toggleAlarm(alarm.id) ?: return
-        
-        if (updatedAlarm.isEnabled) {
-            AlarmScheduler.scheduleAlarm(this, updatedAlarm)
-        } else {
-            AlarmScheduler.cancelAlarm(this, alarm)
+        LogFileWriter.logInfo(this, TAG, "Toggling alarm ${alarm.id} (currently enabled=${alarm.isEnabled})")
+        try {
+            val updatedAlarm = alarmDatabase.toggleAlarm(alarm.id) ?: return
+            
+            if (updatedAlarm.isEnabled) {
+                AlarmScheduler.scheduleAlarm(this, updatedAlarm)
+            } else {
+                AlarmScheduler.cancelAlarm(this, alarm)
+            }
+            
+            loadAlarms()
+        } catch (e: Exception) {
+            LogFileWriter.logError(this, TAG, "Failed to toggle alarm ${alarm.id}", e)
         }
-        
-        loadAlarms()
     }
 
     private fun deleteAlarm(alarm: Alarm) {
-        AlarmScheduler.cancelAlarm(this, alarm)
-        alarmDatabase.deleteAlarm(alarm.id)
-        loadAlarms()
+        LogFileWriter.logInfo(this, TAG, "Deleting alarm ${alarm.id}")
+        try {
+            AlarmScheduler.cancelAlarm(this, alarm)
+            alarmDatabase.deleteAlarm(alarm.id)
+            loadAlarms()
+        } catch (e: Exception) {
+            LogFileWriter.logError(this, TAG, "Failed to delete alarm ${alarm.id}", e)
+        }
+    }
+
+    private fun sendFeedbackWithLogs() {
+        try {
+            val emailIntent = Intent(Intent.ACTION_SEND)
+            emailIntent.type = "message/rfc822"
+            emailIntent.putExtra(Intent.EXTRA_EMAIL, arrayOf("9000applications@gmail.com"))
+            emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Feedback: Step Alarm")
+            emailIntent.putExtra(Intent.EXTRA_TEXT, "Please share your feedback below:\n\n")
+            
+            // Attach logs if available
+            val logUri = LogFileWriter.getLogFileUri(this)
+            if (logUri != null) {
+                emailIntent.putExtra(Intent.EXTRA_STREAM, logUri)
+                emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            
+            val chooserIntent = Intent.createChooser(emailIntent, "Send Feedback")
+            // Note: resolveActivity() returns null on Android 11+ due to package visibility.
+            // Just try to start the activity and catch if nothing handles it.
+            try {
+                startActivity(chooserIntent)
+            } catch (e: android.content.ActivityNotFoundException) {
+                LogFileWriter.logWarning(this, TAG, "No email app available for feedback")
+                Toast.makeText(this, "No email app available", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Unable to send feedback: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
     /**
      * In-app update logic: check for updates and prompt user if needed

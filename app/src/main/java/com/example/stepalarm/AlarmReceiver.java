@@ -27,9 +27,8 @@ public class AlarmReceiver extends BroadcastReceiver {
         LogFileWriter.logInfo(context, TAG, "=== AlarmReceiver.onReceive() called ===");
         
         if (intent == null) {
-            RuntimeException e = new RuntimeException("Intent is null in onReceive");
-            LogFileWriter.logError(context, TAG, "Intent is null in onReceive", e);
-            throw e;
+            LogFileWriter.logError(context, TAG, "Intent is null in onReceive — aborting");
+            return;
         }
         
         String action = intent.getAction();
@@ -51,20 +50,24 @@ public class AlarmReceiver extends BroadcastReceiver {
         LogFileWriter.logInfo(context, TAG, "Alarm ID from intent: " + alarmId);
         
         if (alarmId == -1) {
-            RuntimeException e = new RuntimeException("No alarm_id in intent");
-            LogFileWriter.logError(context, TAG, "No alarm_id in intent", e);
-            throw e;
+            LogFileWriter.logError(context, TAG, "No alarm_id in intent — aborting");
+            return;
         }
 
         // Check if alarm is enabled
         AlarmDatabase alarmDatabase = new AlarmDatabase(context);
-        Alarm alarm = alarmDatabase.getAlarm(alarmId);
+        Alarm alarm = null;
+        try {
+            alarm = alarmDatabase.getAlarm(alarmId);
+        } catch (Exception e) {
+            LogFileWriter.logError(context, TAG, "Exception getting alarm from database for ID: " + alarmId, e);
+            return;
+        }
         LogFileWriter.logInfo(context, TAG, "Retrieved alarm from database: " + (alarm != null ? "found" : "not found"));
         
         if (alarm == null) {
-            RuntimeException e = new RuntimeException("Alarm not found in database for ID: " + alarmId);
-            LogFileWriter.logError(context, TAG, "Alarm not found in database for ID: " + alarmId, e);
-            throw e;
+            LogFileWriter.logError(context, TAG, "Alarm not found in database for ID: " + alarmId + " — aborting");
+            return;
         }
         
         if (!alarm.isEnabled()) {
@@ -102,55 +105,58 @@ public class AlarmReceiver extends BroadcastReceiver {
         LogFileWriter.logInfo(context, TAG, "Alarm sound URI: " + alarmSound);
 
         // Create and configure MediaPlayer
-        mediaPlayer = new MediaPlayer();
         try {
+            mediaPlayer = new MediaPlayer();
             mediaPlayer.setDataSource(context, alarmSound);
-        } catch (IOException e) {
-            RuntimeException re = new RuntimeException("Failed to set MediaPlayer data source", e);
-            LogFileWriter.logError(context, TAG, "Failed to set MediaPlayer data source", re);
-            throw re;
-        }
-        
-        // Set audio attributes to use alarm stream
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            mediaPlayer.setAudioAttributes(
-                new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
-            );
-        } else {
-            mediaPlayer.setAudioStreamType(AudioManager.STREAM_ALARM);
-        }
-        
-        mediaPlayer.setLooping(true);
-        try {
+            
+            // Set audio attributes to use alarm stream
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                mediaPlayer.setAudioAttributes(
+                    new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                );
+            } else {
+                mediaPlayer.setAudioStreamType(AudioManager.STREAM_ALARM);
+            }
+            
+            mediaPlayer.setLooping(true);
             mediaPlayer.prepare();
-        } catch (IOException e) {
-            RuntimeException re = new RuntimeException("Failed to prepare MediaPlayer", e);
-            LogFileWriter.logError(context, TAG, "Failed to prepare MediaPlayer", re);
-            throw re;
+            mediaPlayer.start();
+            LogFileWriter.logInfo(context, TAG, "MediaPlayer started successfully");
+        } catch (Exception e) {
+            LogFileWriter.logError(context, TAG, "Failed to initialize MediaPlayer", e);
+            // Continue anyway — vibration and activity can still work
         }
-        mediaPlayer.start();
-        LogFileWriter.logInfo(context, TAG, "MediaPlayer started successfully");
 
         // Start vibration
-        vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
-        if (vibrator != null && vibrator.hasVibrator()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createWaveform(VIBRATION_PATTERN, 0));
+        try {
+            vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(VIBRATION_PATTERN, 0));
+                } else {
+                    vibrator.vibrate(VIBRATION_PATTERN, 0);
+                }
+                LogFileWriter.logInfo(context, TAG, "Vibration started");
             } else {
-                vibrator.vibrate(VIBRATION_PATTERN, 0);
+                LogFileWriter.logWarning(context, TAG, "No vibrator available");
             }
-            LogFileWriter.logInfo(context, TAG, "Vibration started");
+        } catch (Exception e) {
+            LogFileWriter.logError(context, TAG, "Failed to start vibration", e);
         }
 
         // Start the alarm activity
-        Intent alarmIntent = new Intent(context, AlarmActivity.class);
-        alarmIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        LogFileWriter.logInfo(context, TAG, "Starting AlarmActivity");
-        context.startActivity(alarmIntent);
-        LogFileWriter.logInfo(context, TAG, "AlarmActivity started successfully");
+        try {
+            Intent alarmIntent = new Intent(context, AlarmActivity.class);
+            alarmIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            LogFileWriter.logInfo(context, TAG, "Starting AlarmActivity");
+            context.startActivity(alarmIntent);
+            LogFileWriter.logInfo(context, TAG, "AlarmActivity started successfully");
+        } catch (Exception e) {
+            LogFileWriter.logError(context, TAG, "Failed to start AlarmActivity", e);
+        }
     }
 
     public static void stopAlarm() {

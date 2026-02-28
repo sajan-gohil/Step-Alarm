@@ -6,9 +6,14 @@ import android.content.Context
 import android.content.Intent
 
 object AlarmScheduler {
+    private const val TAG = "AlarmScheduler"
+
     @JvmStatic
     fun scheduleAlarm(context: Context, alarm: Alarm) {
+        LogFileWriter.logInfo(context, TAG, "scheduleAlarm() called for alarm ${alarm.id} (${alarm.hour}:${alarm.minute}, repeating=${alarm.isRepeating}, enabled=${alarm.isEnabled})")
+        
         if (!alarm.isEnabled) {
+            LogFileWriter.logInfo(context, TAG, "Alarm ${alarm.id} is disabled, cancelling instead")
             cancelAlarm(context, alarm)
             return
         }
@@ -46,18 +51,24 @@ object AlarmScheduler {
                     putExtra("alarm_id", alarm.id)
                 }
                 
+                val requestCode = (alarm.id * 10 + dayOfWeek).toInt()
                 val pendingIntent = PendingIntent.getBroadcast(
                     context,
-                    (alarm.id * 10 + dayOfWeek).toInt(), // Unique request code for each day
+                    requestCode, // Unique request code for each day
                     intent,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
                 
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    calendar.timeInMillis,
-                    pendingIntent
-                )
+                try {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        calendar.timeInMillis,
+                        pendingIntent
+                    )
+                    LogFileWriter.logInfo(context, TAG, "Scheduled repeating alarm ${alarm.id} for day $dayOfWeek, requestCode=$requestCode, triggerAt=${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(calendar.timeInMillis))}")
+                } catch (e: Exception) {
+                    LogFileWriter.logError(context, TAG, "Failed to schedule alarm ${alarm.id} for day $dayOfWeek", e)
+                }
             }
         } else {
             // One-time alarm
@@ -84,16 +95,22 @@ object AlarmScheduler {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                calendar.timeInMillis,
-                pendingIntent
-            )
+            try {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    calendar.timeInMillis,
+                    pendingIntent
+                )
+                LogFileWriter.logInfo(context, TAG, "Scheduled one-time alarm ${alarm.id}, triggerAt=${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(calendar.timeInMillis))}")
+            } catch (e: Exception) {
+                LogFileWriter.logError(context, TAG, "Failed to schedule one-time alarm ${alarm.id}", e)
+            }
         }
     }
     
     @JvmStatic
     fun cancelAlarm(context: Context, alarm: Alarm) {
+        LogFileWriter.logInfo(context, TAG, "cancelAlarm() called for alarm ${alarm.id}")
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         
         if (alarm.isRepeating && alarm.repeatDays.isNotEmpty()) {
@@ -133,14 +150,17 @@ object AlarmScheduler {
     
     @JvmStatic
     fun rescheduleAllAlarms(context: Context) {
+        LogFileWriter.logInfo(context, TAG, "rescheduleAllAlarms() called")
         val alarmDatabase = AlarmDatabase(context)
         val alarms = alarmDatabase.getAllAlarms()
+        LogFileWriter.logInfo(context, TAG, "Found ${alarms.size} alarms to reschedule")
         
         alarms.forEach { alarm ->
             if (alarm.isEnabled) {
                 scheduleAlarm(context, alarm)
             }
         }
+        LogFileWriter.logInfo(context, TAG, "rescheduleAllAlarms() completed")
     }
 }
 

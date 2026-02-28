@@ -38,6 +38,8 @@ public class StepCounterService extends Service implements SensorEventListener {
     private boolean useStepDetector = false;
     private long initialStepCounterValue = -1;
     private boolean initialValueSet = false;
+    private long lastLogTime = 0;
+    private static final long LOG_INTERVAL = 2000; // Only log sensor events every 2 seconds
 
     public class LocalBinder extends Binder {
         StepCounterService getService() {
@@ -53,9 +55,9 @@ public class StepCounterService extends Service implements SensorEventListener {
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
         
         if (sensorManager == null) {
-            RuntimeException e = new RuntimeException("SensorManager is null");
-            LogFileWriter.logError(this, TAG, "SensorManager is null", e);
-            throw e;
+            LogFileWriter.logError(this, TAG, "SensorManager is null — service cannot function");
+            stopSelf();
+            return;
         }
         
         // Priority 1: Step Detector (Immediate feedback, best for "count 10 steps")
@@ -73,9 +75,9 @@ public class StepCounterService extends Service implements SensorEventListener {
                 // Priority 3: Accelerometer (Fallback)
                 accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
                 if (accelerometerSensor == null) {
-                    RuntimeException e = new RuntimeException("No step counting sensors found");
-                    LogFileWriter.logError(this, TAG, "No step counting sensors found", e);
-                    throw e;
+                    LogFileWriter.logError(this, TAG, "No step counting sensors found on this device — service cannot function");
+                    stopSelf();
+                    return;
                 } else {
                     LogFileWriter.logInfo(this, TAG, "Accelerometer sensor initialized (fallback)");
                 }
@@ -104,9 +106,7 @@ public class StepCounterService extends Service implements SensorEventListener {
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        LogFileWriter.logInfo(this, TAG, "=== onSensorChanged() called ===");
         if (!isCounting) {
-            LogFileWriter.logWarning(this, TAG, "onSensorChanged called but isCounting is false");
             return;
         }
         if (event == null) {
@@ -114,12 +114,16 @@ public class StepCounterService extends Service implements SensorEventListener {
             return;
         }
         
-        LogFileWriter.logInfo(this, TAG, "Sensor type: " + event.sensor.getType() + ", useStepCounter: " + useStepCounter);
+        // Rate-limit logging to avoid flooding the log file
+        long now = System.currentTimeMillis();
+        boolean shouldLog = (now - lastLogTime) >= LOG_INTERVAL;
+        if (shouldLog) {
+            lastLogTime = now;
+        }
         
         if (useStepCounter && event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
             // Step counter returns cumulative steps since last reboot
             long stepsSinceLastReboot = (long) event.values[0];
-            LogFileWriter.logInfo(this, TAG, "Step counter event received, stepsSinceLastReboot: " + stepsSinceLastReboot);
             
             // Set initial value on first reading
             if (!initialValueSet) {
@@ -137,15 +141,16 @@ public class StepCounterService extends Service implements SensorEventListener {
                     LogFileWriter.logWarning(this, TAG, "Step counter reset detected, reinitializing");
                 }
             }
-            LogFileWriter.logInfo(this, TAG, String.format("StepCounter: total=%d, initial=%d, count=%d", 
-                stepsSinceLastReboot, initialStepCounterValue, stepCount));
+            if (shouldLog) {
+                LogFileWriter.logInfo(this, TAG, String.format("StepCounter: total=%d, initial=%d, count=%d", 
+                    stepsSinceLastReboot, initialStepCounterValue, stepCount));
+            }
             if (stepCount >= 10) {
                 onTargetReached();
             }
         
         } else if (useStepDetector && event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
             // Step detector fires once per step (value is 1.0 when step detected)
-            LogFileWriter.logInfo(this, TAG, "Step detector event received, value: " + event.values[0]);
             if (event.values[0] == 1.0f) {
                 stepCount++;
                 if (stepCount >= 10) {
@@ -183,7 +188,9 @@ public class StepCounterService extends Service implements SensorEventListener {
             if (magnitude > STEP_THRESHOLD && lastMagnitude <= STEP_THRESHOLD) {
                 stepCount++;
                 lastStepTime = currentTime;
-                LogFileWriter.logInfo(this, TAG, String.format("Accelerometer step detected! Total steps: %d, Magnitude: %.3f", stepCount, magnitude));
+                if (shouldLog) {
+                    LogFileWriter.logInfo(this, TAG, String.format("Accelerometer step detected! Total steps: %d, Magnitude: %.3f", stepCount, magnitude));
+                }
             }
             lastMagnitude = magnitude;
         }
@@ -249,27 +256,24 @@ public class StepCounterService extends Service implements SensorEventListener {
             LogFileWriter.logInfo(this, TAG, "Attempting to register step detector sensor");
             registered = sensorManager.registerListener(this, stepDetectorSensor, sensorDelay);
             if (!registered) {
-                RuntimeException e = new RuntimeException("Failed to register step detector sensor listener");
-                LogFileWriter.logError(this, TAG, "Failed to register step detector sensor listener", e);
-                throw e;
+                LogFileWriter.logError(this, TAG, "Failed to register step detector sensor listener");
+                return;
             }
             LogFileWriter.logInfo(this, TAG, "Started step counting using step detector sensor");
         } else if (useStepCounter) {
             LogFileWriter.logInfo(this, TAG, "Attempting to register step counter sensor");
             registered = sensorManager.registerListener(this, stepCounterSensor, sensorDelay);
             if (!registered) {
-                RuntimeException e = new RuntimeException("Failed to register step counter sensor listener");
-                LogFileWriter.logError(this, TAG, "Failed to register step counter sensor listener", e);
-                throw e;
+                LogFileWriter.logError(this, TAG, "Failed to register step counter sensor listener");
+                return;
             }
             LogFileWriter.logInfo(this, TAG, "Started step counting using step counter sensor");
         } else {
             LogFileWriter.logInfo(this, TAG, "Attempting to register accelerometer sensor");
             registered = sensorManager.registerListener(this, accelerometerSensor, sensorDelay);
             if (!registered) {
-                RuntimeException e = new RuntimeException("Failed to register accelerometer sensor listener");
-                LogFileWriter.logError(this, TAG, "Failed to register accelerometer sensor listener", e);
-                throw e;
+                LogFileWriter.logError(this, TAG, "Failed to register accelerometer sensor listener");
+                return;
             }
             LogFileWriter.logInfo(this, TAG, "Started step counting using accelerometer fallback");
         }
@@ -287,7 +291,6 @@ public class StepCounterService extends Service implements SensorEventListener {
     }
 
     public long getStepCount() {
-        LogFileWriter.logInfo(this, TAG, "getStepCount() called, returning: " + stepCount);
         return stepCount;
     }
 
