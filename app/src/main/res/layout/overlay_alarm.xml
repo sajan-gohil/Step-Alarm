@@ -33,6 +33,17 @@
         android:text="Steps remaining: 10"
         android:textSize="18sp"
         android:textColor="@android:color/white"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="4dp"/>
+
+    <TextView
+        android:id="@+id/slowStepHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Walk slowly"
+        android:textSize="13sp"
+        android:textColor="#FFFFCC00"
+        android:textStyle="italic"
         android:layout_gravity="center_horizontal"/>
 
 </LinearLayout> 

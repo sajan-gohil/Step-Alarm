@@ -44,6 +44,17 @@
         android:text="Take 10 steps to turn off the alarm"
         android:textSize="18sp"
         android:textColor="@android:color/white"
+        android:gravity="center"
+        android:layout_marginBottom="24dp"/>
+
+    <TextView
+        android:id="@+id/slowStepHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="\uD83D\uDEB6  Walk slowly and deliberately"
+        android:textSize="16sp"
+        android:textColor="#FFFFCC00"
+        android:textStyle="italic"
         android:gravity="center"/>
 
 </LinearLayout> 

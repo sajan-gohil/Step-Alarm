@@ -162,6 +162,9 @@ public class AlarmActivity extends Activity {
                     TextView tv = (TextView) child;
                     if (child.getId() == R.id.stepCountText || child.getId() == R.id.remainingStepsText) {
                         tv.setTextColor(palette.getAccent());
+                    } else if (child.getId() == R.id.slowStepHint) {
+                        // Keep the hint in a warm accent color for visibility
+                        tv.setTextColor(palette.getAccent());
                     } else {
                         tv.setTextColor(palette.getTextPrimary());
                     }
