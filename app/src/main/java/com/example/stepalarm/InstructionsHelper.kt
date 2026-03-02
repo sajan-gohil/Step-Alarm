@@ -27,13 +27,15 @@ object InstructionsHelper {
     fun showOnFirstLaunch(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_INSTRUCTIONS_SHOWN, false)) {
-            show(context)
-            prefs.edit().putBoolean(KEY_INSTRUCTIONS_SHOWN, true).apply()
+            // Only mark as seen after the user taps "Got it" so permission flows don't dismiss it silently
+            show(context) {
+                prefs.edit().putBoolean(KEY_INSTRUCTIONS_SHOWN, true).apply()
+            }
         }
     }
 
     /** Show unconditionally (for the menu action). */
-    fun show(context: Context) {
+    fun show(context: Context, onAcknowledged: (() -> Unit)? = null) {
         val sensorInfo = detectSensors(context)
         val html = buildInstructionsHtml(sensorInfo)
 
@@ -51,7 +53,10 @@ object InstructionsHelper {
         AlertDialog.Builder(context)
             .setTitle("How to Use Step Alarm")
             .setView(scrollView)
-            .setPositiveButton("Got it!", null)
+            .setPositiveButton("Got it!") { dialog, _ ->
+                onAcknowledged?.invoke()
+                dialog?.dismiss()
+            }
             .setCancelable(true)
             .show()
     }

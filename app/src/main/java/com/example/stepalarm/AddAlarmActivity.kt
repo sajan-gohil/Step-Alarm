@@ -137,6 +137,7 @@ class AddAlarmActivity : AppCompatActivity() {
         val paletteKey = ThemeManager.getSelectedPaletteKey(this)
         val isDarkTheme = paletteKey != ThemeManager.PALETTE_PURE_WHITE
         val textColor = if (isDarkTheme) Color.WHITE else palette.textPrimary
+        val timePickerColor = if (isDarkTheme) Color.WHITE else Color.BLACK
 
         // Find the main content linear layout
         val contentLayout = timePicker.parent as? android.view.ViewGroup
@@ -148,10 +149,8 @@ class AddAlarmActivity : AppCompatActivity() {
             titleText.setTextColor(textColor)
         }
 
-        // TimePicker text color for dark themes
-        if (isDarkTheme) {
-            setTimePickerTextColor(timePicker, Color.WHITE)
-        }
+        // TimePicker text color for all themes (user request: keep white even after scroll)
+        setTimePickerTextColor(timePicker, timePickerColor)
 
         // Repeat checkbox
         repeatCheckBox.setTextColor(textColor)
@@ -189,7 +188,14 @@ class AddAlarmActivity : AppCompatActivity() {
      * Uses a ViewTreeObserver to re-apply after each layout pass (scroll/fling resets).
      */
     private fun setTimePickerTextColor(picker: TimePicker, color: Int) {
-        val applyColor = Runnable {
+        val loggedOnce = mutableSetOf<String>()
+        fun logOnce(key: String, e: Exception) {
+            if (loggedOnce.add(key)) {
+                LogFileWriter.logError(this, TAG, "TimePicker color: $key", e)
+            }
+        }
+
+        val applyColor = {
             try {
                 val queue: java.util.ArrayDeque<android.view.View> = java.util.ArrayDeque()
                 queue.add(picker)
@@ -201,14 +207,58 @@ class AddAlarmActivity : AppCompatActivity() {
                     }
                     if (v is android.widget.NumberPicker) {
                         try {
-                            // Use reflection to set the text color on the NumberPicker's
-                            // selectorWheelPaint and divider
+                            // set EditText children color
+                            for (i in 0 until v.childCount) {
+                                val c = v.getChildAt(i)
+                                if (c is android.widget.EditText) c.setTextColor(color)
+                            }
+
+                            // Explicitly set text color via hidden API (covers side numbers)
+                            try {
+                                val setTextColor = android.widget.NumberPicker::class.java
+                                    .getDeclaredMethod("setTextColor", Int::class.javaPrimitiveType)
+                                setTextColor.isAccessible = true
+                                setTextColor.invoke(v, color)
+                            } catch (e: Exception) {
+                                logOnce("setTextColorHidden", e)
+                            }
+
+                            // Use reflection to set the selector wheel paint color
                             val selectorWheelPaint = android.widget.NumberPicker::class.java
                                 .getDeclaredField("mSelectorWheelPaint")
                             selectorWheelPaint.isAccessible = true
                             (selectorWheelPaint.get(v) as? android.graphics.Paint)?.color = color
+
+                            // Reapply colors while scrolling (some OEM pickers overwrite colors)
+                            try {
+                                v.setOnScrollListener(android.widget.NumberPicker.OnScrollListener { _, _ ->
+                                    try {
+                                        for (i in 0 until v.childCount) {
+                                            val c = v.getChildAt(i)
+                                            if (c is android.widget.EditText) c.setTextColor(color)
+                                        }
+                                        try {
+                                            val setTextColor = android.widget.NumberPicker::class.java
+                                                .getDeclaredMethod("setTextColor", Int::class.javaPrimitiveType)
+                                            setTextColor.isAccessible = true
+                                            setTextColor.invoke(v, color)
+                                        } catch (e: Exception) {
+                                            logOnce("scrollHiddenSetTextColor", e)
+                                        }
+                                        (selectorWheelPaint.get(v) as? android.graphics.Paint)?.color = color
+                                        v.invalidate()
+                                    } catch (e: Exception) {
+                                        logOnce("scrollApplyColor", e)
+                                    }
+                                })
+                            } catch (e: Exception) {
+                                logOnce("setOnScrollListener", e)
+                            }
+
                             v.invalidate()
-                        } catch (_: Exception) { }
+                        } catch (e: Exception) {
+                            logOnce("numberPickerBlock", e)
+                        }
                     }
                     if (v is android.view.ViewGroup) {
                         for (i in 0 until v.childCount) {
@@ -216,12 +266,14 @@ class AddAlarmActivity : AppCompatActivity() {
                         }
                     }
                 }
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                logOnce("applyColor", e)
+            }
         }
         // Apply now
-        applyColor.run()
+        applyColor()
         // Re-apply after every layout pass so scrolling doesn't revert to black
-        picker.viewTreeObserver.addOnGlobalLayoutListener { applyColor.run() }
+        picker.viewTreeObserver.addOnGlobalLayoutListener { applyColor() }
     }
 
     private fun applyCloseTransition() {
