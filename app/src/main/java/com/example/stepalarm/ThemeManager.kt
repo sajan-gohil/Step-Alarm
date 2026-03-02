@@ -19,7 +19,7 @@ object ThemeManager {
     const val PALETTE_PURE_WHITE = "pure_white"
 
     // Default palette
-    private const val DEFAULT_PALETTE = PALETTE_SOOTHING_DAWN
+    private const val DEFAULT_PALETTE = PALETTE_MATERIAL_DEEP_DARK
 
     data class Palette(
         val name: String,

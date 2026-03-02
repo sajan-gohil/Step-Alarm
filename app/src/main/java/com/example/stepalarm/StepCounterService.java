@@ -24,43 +24,41 @@ public class StepCounterService extends Service implements SensorEventListener {
     private SensorManager sensorManager;
     private Sensor accelerometerSensor;
     private Sensor stepDetectorSensor;
+    private Sensor stepCounterSensor;
     private long stepCount = 0;
     private boolean isCounting = false;
-    private float lastMagnitude = 0;
-    private static final float STEP_THRESHOLD = 2.0f; // Threshold for step detection (m/s^2 above gravity)
-    private static final long MIN_STEP_INTERVAL = 300; // Minimum time between steps (ms)
-    private long lastStepTime = 0;
-    private float[] gravity = new float[3]; // For filtering gravity
-    private float[] linearAcceleration = new float[3]; // For step detection
-    private static final float ALPHA = 0.8f; // Low-pass filter constant
-    private Sensor stepCounterSensor;
-    private boolean useStepCounter = false;
-    private boolean useStepDetector = false;
-    private long initialStepCounterValue = -1;
-    private boolean initialValueSet = false;
     private long lastLogTime = 0;
-    private static final long LOG_INTERVAL = 2000; // Only log sensor events every 2 seconds
+    private static final long LOG_INTERVAL = 2000;
 
-    // === Enhanced step counting: debouncing ===
-    private long lastConfirmedStepTime = 0;
-    private static final long MIN_STEP_DELAY = 500; // 500ms minimum between counted steps
+    // === Ensemble timing window ===
+    // Every 1 second we evaluate all sources and advance steps by at most 1
+    // (or by the step-detector delta if it reported more).
+    private static final long ENSEMBLE_WINDOW_MS = 1000;
+    private long windowStartTime = 0;
 
-    // === Ensemble mode: step detector + accelerometer confirmation ===
-    private boolean useEnsembleMode = false;
-    private boolean accelerometerMotionConfirmed = false;
-    private long lastAccelMotionTime = 0;
-    private static final long MOTION_CONFIRM_WINDOW = 1000; // ms window for accel to confirm a step
-    private int pendingStepDetectorEvents = 0; // step detector events awaiting accel confirmation
-
-    // === Improved accelerometer analysis ===
-    private static final int MAG_BUFFER_SIZE = 15; // circular buffer for smoothing
+    // --- Accelerometer peak detection (horizontal + vertical) ---
+    private float[] gravity = new float[3];
+    private static final float ALPHA = 0.8f;
+    private static final int MAG_BUFFER_SIZE = 20; // ~20 samples at GAME rate ≈ window
     private final float[] magnitudeBuffer = new float[MAG_BUFFER_SIZE];
     private int magBufIdx = 0;
     private boolean magBufFilled = false;
-    private boolean inPeakPhase = false; // true = saw peak, waiting for valley to complete step cycle
-    private static final float ACCEL_PEAK_THRESHOLD = 1.6f;  // magnitude must exceed this
-    private static final float ACCEL_VALLEY_THRESHOLD = 0.6f; // magnitude must drop below this
-    private static final float ENSEMBLE_MOTION_THRESHOLD = 1.2f; // lower threshold for ensemble confirmation
+    private float prevSmoothed = 0;
+    private float prevPrevSmoothed = 0;
+    private int accelPeakCountInWindow = 0;  // number of smoothed peaks in the window
+    private static final float HORIZONTAL_PEAK_THRESHOLD = 1.2f;  // raised to reduce hand-shake false positives
+
+    // --- Step Counter sensor (cumulative since reboot) ---
+    private boolean useStepCounter = false;
+    private long initialStepCounterValue = -1;
+    private boolean initialValueSet = false;
+    private long lastKnownStepCounterSteps = 0; // steps derived from counter at window start
+    private boolean stepCounterIncreasedInWindow = false;
+    private long stepCounterDeltaInWindow = 0;
+
+    // --- Step Detector sensor (event-based) ---
+    private boolean useStepDetector = false;
+    private int stepDetectorEventsInWindow = 0;
 
     public class LocalBinder extends Binder {
         StepCounterService getService() {
@@ -81,32 +79,25 @@ public class StepCounterService extends Service implements SensorEventListener {
             return;
         }
         
-        // Always try to get accelerometer for ensemble/fallback use
+        // Always grab accelerometer (required for horizontal peak detection)
         accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         
-        // Priority 1: Step Detector + Accelerometer ensemble (best accuracy)
+        // Try to get step detector and step counter too (ensemble uses all available)
         stepDetectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
-        if (stepDetectorSensor != null && accelerometerSensor != null) {
-            useStepDetector = true;
-            useEnsembleMode = true;
-            LogFileWriter.logInfo(this, TAG, "Step detector + accelerometer ensemble mode (Priority 1)");
-        } else if (stepDetectorSensor != null) {
-            useStepDetector = true;
-            LogFileWriter.logInfo(this, TAG, "Step detector only (no accelerometer for ensemble)");
-        } else {
-            // Priority 2: Step Counter with debounce
-            stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
-            if (stepCounterSensor != null) {
-                useStepCounter = true;
-                LogFileWriter.logInfo(this, TAG, "Step counter sensor found, will use it (Priority 2)");
-            } else if (accelerometerSensor != null) {
-                // Priority 3: Accelerometer only (improved peak detection)
-                LogFileWriter.logInfo(this, TAG, "Accelerometer-only mode with peak detection (Priority 3)");
-            } else {
-                LogFileWriter.logError(this, TAG, "No step counting sensors found on this device — service cannot function");
-                stopSelf();
-                return;
-            }
+        stepCounterSensor  = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+        
+        useStepDetector = (stepDetectorSensor != null);
+        useStepCounter  = (stepCounterSensor  != null);
+        
+        StringBuilder sb = new StringBuilder("Ensemble sensors: accel=");
+        sb.append(accelerometerSensor != null);
+        sb.append(", stepDetector=").append(useStepDetector);
+        sb.append(", stepCounter=").append(useStepCounter);
+        LogFileWriter.logInfo(this, TAG, sb.toString());
+
+        if (accelerometerSensor == null && !useStepDetector && !useStepCounter) {
+            LogFileWriter.logError(this, TAG, "No step counting sensors found — stopping");
+            stopSelf();
         }
     }
 
@@ -131,209 +122,138 @@ public class StepCounterService extends Service implements SensorEventListener {
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (!isCounting) {
-            return;
-        }
-        if (event == null) {
-            LogFileWriter.logError(this, TAG, "onSensorChanged called with null event");
-            return;
-        }
+        if (!isCounting || event == null) return;
         
-        // Rate-limit logging to avoid flooding the log file
         long now = System.currentTimeMillis();
         boolean shouldLog = (now - lastLogTime) >= LOG_INTERVAL;
-        if (shouldLog) {
-            lastLogTime = now;
+        if (shouldLog) lastLogTime = now;
+        
+        // Initialise window on first event
+        if (windowStartTime == 0) {
+            windowStartTime = now;
+        }
+        
+        // --- Accumulate evidence within the current 500 ms window ---
+        
+        if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+            processAccelerometer(event);
+        }
+        
+        if (useStepDetector && event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
+            if (event.values[0] == 1.0f) {
+                stepDetectorEventsInWindow++;
+            }
         }
         
         if (useStepCounter && event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
-            handleStepCounterEvent(event, shouldLog);
-        } else if (useStepDetector && event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
-            handleStepDetectorEvent(event, shouldLog);
-        }
-        
-        // Accelerometer processing for ensemble confirmation OR standalone mode
-        if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
-            handleAccelerometerEvent(event, shouldLog);
-        }
-    }
-
-    /**
-     * Handle TYPE_STEP_COUNTER events (cumulative since reboot).
-     * Applies MIN_STEP_DELAY debounce to avoid jitter.
-     */
-    private void handleStepCounterEvent(SensorEvent event, boolean shouldLog) {
-        long stepsSinceLastReboot = (long) event.values[0];
-        
-        if (!initialValueSet) {
-            initialStepCounterValue = stepsSinceLastReboot;
-            initialValueSet = true;
-            stepCount = 0;
-            LogFileWriter.logInfo(this, TAG, "Initial step counter value set: " + initialStepCounterValue);
-            return;
-        }
-        
-        long rawSteps = stepsSinceLastReboot - initialStepCounterValue;
-        if (rawSteps < 0) {
-            initialStepCounterValue = stepsSinceLastReboot;
-            rawSteps = 0;
-            LogFileWriter.logWarning(this, TAG, "Step counter reset detected, reinitializing");
-        }
-        
-        // Debounce: only update if MIN_STEP_DELAY has passed since last counted step
-        long now = System.currentTimeMillis();
-        if (rawSteps > stepCount && (now - lastConfirmedStepTime) >= MIN_STEP_DELAY) {
-            stepCount = rawSteps;
-            lastConfirmedStepTime = now;
-        }
-        
-        if (shouldLog) {
-            LogFileWriter.logInfo(this, TAG, String.format("StepCounter: total=%d, initial=%d, count=%d",
-                stepsSinceLastReboot, initialStepCounterValue, stepCount));
-        }
-        if (stepCount >= 10) {
-            onTargetReached();
-        }
-    }
-
-    /**
-     * Handle TYPE_STEP_DETECTOR events.
-     * In ensemble mode: requires accelerometer motion confirmation within a time window.
-     * Otherwise: applies MIN_STEP_DELAY debounce.
-     */
-    private void handleStepDetectorEvent(SensorEvent event, boolean shouldLog) {
-        if (event.values[0] != 1.0f) return;
-        
-        long now = System.currentTimeMillis();
-        
-        // Enforce minimum delay between counted steps
-        if ((now - lastConfirmedStepTime) < MIN_STEP_DELAY) {
-            if (shouldLog) {
-                LogFileWriter.logInfo(this, TAG, "Step detector event debounced (too fast)");
-            }
-            return;
-        }
-        
-        if (useEnsembleMode) {
-            // Ensemble: require accelerometer motion confirmation
-            if (accelerometerMotionConfirmed && (now - lastAccelMotionTime) < MOTION_CONFIRM_WINDOW) {
-                // Accelerometer recently confirmed motion — count this step
-                stepCount++;
-                lastConfirmedStepTime = now;
-                accelerometerMotionConfirmed = false; // consume the confirmation
-                LogFileWriter.logInfo(this, TAG, String.format(
-                    "Ensemble step confirmed! Steps: %d", stepCount));
+            long raw = (long) event.values[0];
+            if (!initialValueSet) {
+                initialStepCounterValue = raw;
+                initialValueSet = true;
+                lastKnownStepCounterSteps = 0;
             } else {
-                // No recent accelerometer confirmation — hold as pending
-                pendingStepDetectorEvents++;
-                if (shouldLog) {
-                    LogFileWriter.logInfo(this, TAG, String.format(
-                        "Step detector event pending accel confirmation (%d pending)", pendingStepDetectorEvents));
+                long derived = raw - initialStepCounterValue;
+                if (derived < 0) { // reboot
+                    initialStepCounterValue = raw;
+                    derived = 0;
                 }
-                return; // don't count yet
+                if (derived > lastKnownStepCounterSteps) {
+                    stepCounterDeltaInWindow += (derived - lastKnownStepCounterSteps);
+                    stepCounterIncreasedInWindow = true;
+                    lastKnownStepCounterSteps = derived;
+                }
             }
-        } else {
-            // Non-ensemble: just debounce
-            stepCount++;
-            lastConfirmedStepTime = now;
-            LogFileWriter.logInfo(this, TAG, String.format("Step detected (debounced)! Steps: %d", stepCount));
         }
         
-        if (stepCount >= 10) {
-            onTargetReached();
+        // --- End of window? Evaluate and advance step count ---
+        if ((now - windowStartTime) >= ENSEMBLE_WINDOW_MS) {
+            evaluateWindow(shouldLog);
+            // Reset window
+            windowStartTime = now;
+            accelPeakCountInWindow = 0;
+            stepDetectorEventsInWindow = 0;
+            stepCounterIncreasedInWindow = false;
+            stepCounterDeltaInWindow = 0;
         }
     }
 
     /**
-     * Handle accelerometer events.
-     * Uses smoothed magnitude with peak-valley detection.
-     * In ensemble mode: confirms step detector events.
-     * In standalone mode: counts steps directly.
+     * Evaluate one 1-second ensemble window.
+     *  - If step detector fired, trust its count (usually 1).
+     *  - Else if accelerometer detected at least 1 smoothed local peak
+     *    OR step counter increased → +1.
      */
-    private void handleAccelerometerEvent(SensorEvent event, boolean shouldLog) {
+    private void evaluateWindow(boolean shouldLog) {
+        int increment = 0;
+        String source = "";
+        
+        if (stepDetectorEventsInWindow > 0) {
+            increment = stepDetectorEventsInWindow;
+            source = "stepDetector(" + increment + ")";
+        } else if (accelPeakCountInWindow >= 1 || stepCounterIncreasedInWindow) {
+            // Require at least 1 real smoothed peak from accelerometer, or step counter says so
+            increment = 1;
+            source = (accelPeakCountInWindow >= 1) ? "accelPeak(" + accelPeakCountInWindow + ")" : "stepCounter";
+            if (accelPeakCountInWindow >= 1 && stepCounterIncreasedInWindow) source = "accelPeak+stepCounter";
+        }
+        
+        if (increment > 0) {
+            stepCount += increment;
+            if (shouldLog) {
+                LogFileWriter.logInfo(this, TAG, String.format(
+                    "Ensemble step: +%d (%s) total=%d", increment, source, stepCount));
+            }
+            if (stepCount >= 10) {
+                onTargetReached();
+            }
+        }
+    }
+
+    /**
+     * Process accelerometer readings to detect local peaks.
+     * Uses horizontal (X, Y) and also checks vertical (Y-axis) movement.
+     * A peak is a point where the smoothed magnitude exceeds both its neighbours
+     * and is above HORIZONTAL_PEAK_THRESHOLD.
+     */
+    private void processAccelerometer(SensorEvent event) {
         // Low-pass filter to isolate gravity
         gravity[0] = ALPHA * gravity[0] + (1 - ALPHA) * event.values[0];
         gravity[1] = ALPHA * gravity[1] + (1 - ALPHA) * event.values[1];
         gravity[2] = ALPHA * gravity[2] + (1 - ALPHA) * event.values[2];
         
-        // Remove gravity → linear acceleration
-        linearAcceleration[0] = event.values[0] - gravity[0];
-        linearAcceleration[1] = event.values[1] - gravity[1];
-        linearAcceleration[2] = event.values[2] - gravity[2];
+        // Linear acceleration (remove gravity) — include X, Y, and Z
+        float ax = event.values[0] - gravity[0];
+        float ay = event.values[1] - gravity[1];
+        float az = event.values[2] - gravity[2];
         
-        float rawMagnitude = (float) Math.sqrt(
-            linearAcceleration[0] * linearAcceleration[0] +
-            linearAcceleration[1] * linearAcceleration[1] +
-            linearAcceleration[2] * linearAcceleration[2]
-        );
+        // Full magnitude including vertical component for walking detection
+        float rawMag = (float) Math.sqrt(ax * ax + ay * ay + az * az);
         
-        // Smooth magnitude with circular buffer moving average
-        magnitudeBuffer[magBufIdx] = rawMagnitude;
+        // Smooth with circular buffer
+        magnitudeBuffer[magBufIdx] = rawMag;
         magBufIdx = (magBufIdx + 1) % MAG_BUFFER_SIZE;
         if (magBufIdx == 0) magBufFilled = true;
         
         int count = magBufFilled ? MAG_BUFFER_SIZE : magBufIdx;
-        if (count == 0) return;
+        if (count < 3) {
+            prevPrevSmoothed = prevSmoothed;
+            prevSmoothed = rawMag;
+            return;
+        }
         
         float sum = 0;
         for (int i = 0; i < count; i++) sum += magnitudeBuffer[i];
-        float smoothedMagnitude = sum / count;
+        float smoothed = sum / count;
         
-        long currentTime = System.currentTimeMillis();
-        
-        if (useEnsembleMode) {
-            // Ensemble: use accelerometer to confirm step detector events
-            if (smoothedMagnitude > ENSEMBLE_MOTION_THRESHOLD) {
-                accelerometerMotionConfirmed = true;
-                lastAccelMotionTime = currentTime;
-                
-                // Check if there are pending step detector events to confirm
-                if (pendingStepDetectorEvents > 0 && (currentTime - lastConfirmedStepTime) >= MIN_STEP_DELAY) {
-                    stepCount++;
-                    lastConfirmedStepTime = currentTime;
-                    pendingStepDetectorEvents--;
-                    accelerometerMotionConfirmed = false;
-                    LogFileWriter.logInfo(this, TAG, String.format(
-                        "Pending step confirmed by accel! Steps: %d, smoothedMag: %.3f",
-                        stepCount, smoothedMagnitude));
-                    if (stepCount >= 10) {
-                        onTargetReached();
-                    }
-                }
-            }
-        } else if (!useStepCounter && !useStepDetector) {
-            // Standalone accelerometer mode: peak-valley detection
-            if ((currentTime - lastConfirmedStepTime) < MIN_STEP_DELAY) {
-                lastMagnitude = smoothedMagnitude;
-                return;
-            }
-            
-            if (!inPeakPhase) {
-                // Looking for peak: smoothed magnitude crosses above peak threshold
-                if (smoothedMagnitude > ACCEL_PEAK_THRESHOLD && lastMagnitude <= ACCEL_PEAK_THRESHOLD) {
-                    inPeakPhase = true;
-                    if (shouldLog) {
-                        LogFileWriter.logInfo(this, TAG, String.format(
-                            "Accel peak detected, magnitude: %.3f", smoothedMagnitude));
-                    }
-                }
-            } else {
-                // Looking for valley: magnitude drops below valley threshold → step complete
-                if (smoothedMagnitude < ACCEL_VALLEY_THRESHOLD) {
-                    inPeakPhase = false;
-                    stepCount++;
-                    lastConfirmedStepTime = currentTime;
-                    if (shouldLog) {
-                        LogFileWriter.logInfo(this, TAG, String.format(
-                            "Accel step (peak-valley)! Steps: %d, mag: %.3f", stepCount, smoothedMagnitude));
-                    }
-                    if (stepCount >= 10) {
-                        onTargetReached();
-                    }
-                }
-            }
-            lastMagnitude = smoothedMagnitude;
+        // Local peak: previous smoothed value is greater than both its neighbours
+        // and above the threshold — this filters out hand shaking noise
+        if (prevSmoothed > prevPrevSmoothed && prevSmoothed > smoothed
+                && prevSmoothed > HORIZONTAL_PEAK_THRESHOLD) {
+            accelPeakCountInWindow++;
         }
+        
+        prevPrevSmoothed = prevSmoothed;
+        prevSmoothed = smoothed;
     }
 
     @Override
@@ -377,60 +297,26 @@ public class StepCounterService extends Service implements SensorEventListener {
             return;
         }
         
-        stepCount = 0;
-        lastMagnitude = 0;
-        lastStepTime = 0;
-        initialStepCounterValue = -1;
-        initialValueSet = false;
-        // Reset gravity filter
-        gravity[0] = 0;
-        gravity[1] = 0;
-        gravity[2] = 0;
+        resetStepCount();
         
-        boolean registered = false;
-        
-        // Use SENSOR_DELAY_GAME for lower latency to avoid batching issues
         int sensorDelay = SensorManager.SENSOR_DELAY_GAME;
         
+        // Register all available sensors for ensemble evaluation
+        if (accelerometerSensor != null) {
+            boolean ok = sensorManager.registerListener(this, accelerometerSensor, sensorDelay);
+            LogFileWriter.logInfo(this, TAG, "Accelerometer registered: " + ok);
+        }
         if (useStepDetector) {
-            LogFileWriter.logInfo(this, TAG, "Registering step detector sensor");
-            registered = sensorManager.registerListener(this, stepDetectorSensor, sensorDelay);
-            if (!registered) {
-                LogFileWriter.logError(this, TAG, "Failed to register step detector sensor listener");
-                return;
-            }
-            // Ensemble: also register accelerometer for motion confirmation
-            if (useEnsembleMode && accelerometerSensor != null) {
-                boolean accelRegistered = sensorManager.registerListener(this, accelerometerSensor, sensorDelay);
-                if (accelRegistered) {
-                    LogFileWriter.logInfo(this, TAG, "Ensemble mode: step detector + accelerometer registered");
-                } else {
-                    useEnsembleMode = false;
-                    LogFileWriter.logWarning(this, TAG, "Failed to register accelerometer for ensemble, falling back to step detector only");
-                }
-            } else {
-                LogFileWriter.logInfo(this, TAG, "Started step counting using step detector (no ensemble)");
-            }
-        } else if (useStepCounter) {
-            LogFileWriter.logInfo(this, TAG, "Registering step counter sensor");
-            registered = sensorManager.registerListener(this, stepCounterSensor, sensorDelay);
-            if (!registered) {
-                LogFileWriter.logError(this, TAG, "Failed to register step counter sensor listener");
-                return;
-            }
-            LogFileWriter.logInfo(this, TAG, "Started step counting using step counter sensor");
-        } else {
-            LogFileWriter.logInfo(this, TAG, "Registering accelerometer sensor (standalone peak-valley detection)");
-            registered = sensorManager.registerListener(this, accelerometerSensor, sensorDelay);
-            if (!registered) {
-                LogFileWriter.logError(this, TAG, "Failed to register accelerometer sensor listener");
-                return;
-            }
-            LogFileWriter.logInfo(this, TAG, "Started step counting using accelerometer peak-valley detection");
+            boolean ok = sensorManager.registerListener(this, stepDetectorSensor, sensorDelay);
+            LogFileWriter.logInfo(this, TAG, "Step detector registered: " + ok);
+        }
+        if (useStepCounter) {
+            boolean ok = sensorManager.registerListener(this, stepCounterSensor, sensorDelay);
+            LogFileWriter.logInfo(this, TAG, "Step counter registered: " + ok);
         }
         
         isCounting = true;
-        LogFileWriter.logInfo(this, TAG, "Step counting is now active");
+        LogFileWriter.logInfo(this, TAG, "Step counting is now active (ensemble mode)");
     }
 
     public void stopCounting() {
@@ -447,21 +333,22 @@ public class StepCounterService extends Service implements SensorEventListener {
 
     public void resetStepCount() {
         stepCount = 0;
-        lastMagnitude = 0;
-        lastStepTime = 0;
         initialStepCounterValue = -1;
         initialValueSet = false;
+        lastKnownStepCounterSteps = 0;
         gravity[0] = 0;
         gravity[1] = 0;
         gravity[2] = 0;
-        // Reset enhanced counting state
-        lastConfirmedStepTime = 0;
-        accelerometerMotionConfirmed = false;
-        lastAccelMotionTime = 0;
-        pendingStepDetectorEvents = 0;
+        // Reset ensemble window state
+        windowStartTime = 0;
+        accelPeakCountInWindow = 0;
+        stepDetectorEventsInWindow = 0;
+        stepCounterIncreasedInWindow = false;
+        stepCounterDeltaInWindow = 0;
+        prevSmoothed = 0;
+        prevPrevSmoothed = 0;
         magBufIdx = 0;
         magBufFilled = false;
-        inPeakPhase = false;
         for (int i = 0; i < MAG_BUFFER_SIZE; i++) magnitudeBuffer[i] = 0;
     }
 

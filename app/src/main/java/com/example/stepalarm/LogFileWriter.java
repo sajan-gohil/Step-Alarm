@@ -30,95 +30,62 @@ import java.util.Locale;
  */
 public class LogFileWriter {
     private static final String TAG = "LogFileWriter";
-    private static final String LOG_FILE_PREFIX = "step_alarm_log_";
+    private static final String LOG_FILE_NAME = "step_alarm_logs.txt";
+    private static final int MAX_LINES = 1500;
     private static final Object LOCK = new Object();
 
-    // Session state (one log file per app process lifetime)
-    private static Uri mediaStoreUri = null;
-    private static OutputStream mediaStoreStream = null;
-    private static File directLogFile = null;
-    private static String sessionTimestamp = null;
+    // Persistent log file (single file across all app runs)
+    private static File persistentLogFile = null;
     private static boolean initAttempted = false;
 
-    private static String getSessionTimestamp() {
-        if (sessionTimestamp == null) {
-            sessionTimestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        }
-        return sessionTimestamp;
-    }
-
     private static String getLogFileName() {
-        return LOG_FILE_PREFIX + getSessionTimestamp() + ".txt";
+        return LOG_FILE_NAME;
     }
 
     /**
-     * Creates the log file on first call. Tries, in order:
-     * 1. MediaStore Downloads (API 29+, no permission needed, visible in file manager)
-     * 2. Direct file in public Downloads (API < 29, needs WRITE_EXTERNAL_STORAGE)
-     * 3. App-specific external dir (always works but hidden on Android 11+)
-     * 4. Internal storage (always works, not visible in file manager)
+     * Creates the persistent log file on first call.
+     * Uses internal storage (always works, persists across app runs).
      */
     private static void ensureInitialized(Context context) {
         if (initAttempted) return;
         initAttempted = true;
 
         String fileName = getLogFileName();
+        persistentLogFile = new File(context.getFilesDir(), fileName);
+        Log.i(TAG, "Log file (persistent): " + persistentLogFile.getAbsolutePath());
+    }
 
-        // 1. MediaStore Downloads (API 29+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                ContentValues values = new ContentValues();
-                values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
-                values.put(MediaStore.Downloads.MIME_TYPE, "text/plain");
-                values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-                values.put(MediaStore.Downloads.IS_PENDING, 0);
-                mediaStoreUri = context.getContentResolver().insert(
-                        MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-                if (mediaStoreUri != null) {
-                    mediaStoreStream = context.getContentResolver()
-                            .openOutputStream(mediaStoreUri, "wa");
-                    if (mediaStoreStream != null) {
-                        Log.i(TAG, "Log file created: Download/" + fileName + " (MediaStore)");
-                        return;
+    /**
+     * Trims the log file to keep only the last MAX_LINES lines.
+     * Called after writing to prevent unbounded growth.
+     */
+    private static void trimLogFile() {
+        if (persistentLogFile == null || !persistentLogFile.exists()) return;
+
+        try {
+            // Read all lines
+            BufferedReader reader = new BufferedReader(new FileReader(persistentLogFile));
+            java.util.List<String> lines = new java.util.ArrayList<>();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lines.add(line);
+            }
+            reader.close();
+
+            // Keep only last MAX_LINES
+            java.util.List<String> trimmedLines;
+            if (lines.size() > MAX_LINES) {
+                trimmedLines = lines.subList(lines.size() - MAX_LINES, lines.size());
+                try (FileWriter writer = new FileWriter(persistentLogFile, false)) {
+                    for (String l : trimmedLines) {
+                        writer.append(l).append("\n");
                     }
+                    writer.flush();
                 }
-            } catch (Exception e) {
-                Log.e(TAG, "MediaStore init failed", e);
-                mediaStoreUri = null;
-                mediaStoreStream = null;
-            }
-        }
-
-        // 2. Direct file in public Downloads (API < 29)
-        try {
-            File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            if (dir != null) {
-                dir.mkdirs();
-                File f = new File(dir, fileName);
-                new FileWriter(f, true).close(); // test write
-                directLogFile = f;
-                Log.i(TAG, "Log file created: " + f.getAbsolutePath());
-                return;
             }
         } catch (Exception e) {
-            Log.e(TAG, "Direct Downloads write failed", e);
+            Log.e(TAG, "Failed to trim log file", e);
         }
-
-        // 3. App-specific external dir
-        try {
-            File dir = context.getExternalFilesDir(null);
-            if (dir != null) {
-                directLogFile = new File(dir, fileName);
-                Log.i(TAG, "Log file (app external): " + directLogFile.getAbsolutePath());
-                return;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "External app dir failed", e);
-        }
-
-        // 4. Internal storage
-        directLogFile = new File(context.getFilesDir(), fileName);
-        Log.i(TAG, "Log file (internal): " + directLogFile.getAbsolutePath());
     }
 
     public static void log(Context context, String level, String tag, String message) {
@@ -150,27 +117,16 @@ public class LogFileWriter {
             synchronized (LOCK) {
                 ensureInitialized(context);
 
-                // Write via cached MediaStore stream
-                if (mediaStoreStream != null) {
-                    try {
-                        mediaStoreStream.write(logEntry.toString().getBytes());
-                        mediaStoreStream.flush();
-                        return;
-                    } catch (Exception e) {
-                        Log.e(TAG, "MediaStore write failed", e);
-                        try { mediaStoreStream.close(); } catch (Exception ignored) {}
-                        mediaStoreStream = null;
-                    }
-                }
-
-                // Write to direct file
-                if (directLogFile != null) {
-                    try (FileWriter writer = new FileWriter(directLogFile, true)) {
+                // Write to persistent file
+                if (persistentLogFile != null) {
+                    try (FileWriter writer = new FileWriter(persistentLogFile, true)) {
                         writer.append(logEntry.toString());
                         writer.flush();
                     } catch (Exception e) {
-                        Log.e(TAG, "Direct file write failed", e);
+                        Log.e(TAG, "File write failed", e);
                     }
+                    // Trim file if needed
+                    trimLogFile();
                 }
             }
         } catch (Exception e) {
@@ -202,48 +158,32 @@ public class LogFileWriter {
     public static Uri getLogFileUri(Context context) {
         synchronized (LOCK) {
             ensureInitialized(context);
-            if (mediaStoreUri != null) return mediaStoreUri;
-            if (directLogFile != null) return Uri.fromFile(directLogFile);
+            if (persistentLogFile != null && persistentLogFile.exists()) {
+                return androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        context.getPackageName() + ".fileprovider",
+                        persistentLogFile);
+            }
             return null;
         }
     }
 
-    /** Returns the direct File, or null when using MediaStore. */
+    /** Returns the persistent log file. */
     public static File getLogFile(Context context) {
         synchronized (LOCK) {
             ensureInitialized(context);
-            return directLogFile;
+            return persistentLogFile;
         }
     }
 
-    /** Reads all log content (works for both MediaStore and direct file). */
+    /** Reads all log content from the persistent file. */
     public static String readLogContent(Context context) {
         synchronized (LOCK) {
             ensureInitialized(context);
 
-            // Try MediaStore URI
-            if (mediaStoreUri != null) {
+            if (persistentLogFile != null && persistentLogFile.exists()) {
                 try {
-                    InputStream is = context.getContentResolver().openInputStream(mediaStoreUri);
-                    if (is != null) {
-                        BufferedReader reader = new BufferedReader(new InputStreamReader(is));
-                        StringBuilder sb = new StringBuilder();
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            sb.append(line).append("\n");
-                        }
-                        reader.close();
-                        return sb.toString();
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Failed to read MediaStore log", e);
-                }
-            }
-
-            // Try direct file
-            if (directLogFile != null && directLogFile.exists()) {
-                try {
-                    BufferedReader reader = new BufferedReader(new FileReader(directLogFile));
+                    BufferedReader reader = new BufferedReader(new FileReader(persistentLogFile));
                     StringBuilder sb = new StringBuilder();
                     String line;
                     while ((line = reader.readLine()) != null) {
@@ -252,7 +192,7 @@ public class LogFileWriter {
                     reader.close();
                     return sb.toString();
                 } catch (Exception e) {
-                    Log.e(TAG, "Failed to read direct log file", e);
+                    Log.e(TAG, "Failed to read log file", e);
                 }
             }
 

@@ -12,6 +12,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -30,6 +32,7 @@ import com.google.android.material.floatingactionbutton.ExtendedFloatingActionBu
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
 import com.google.android.play.core.appupdate.AppUpdateInfo
+import com.google.android.play.core.appupdate.AppUpdateOptions
 import com.google.android.play.core.install.model.UpdateAvailability
 import com.google.android.play.core.install.model.AppUpdateType as PlayCoreAppUpdateType
 
@@ -57,7 +60,7 @@ class MainActivity : AppCompatActivity() {
 
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { result ->
+    ) { _ ->
         isReturningFromPermissionSettings = true
         // Check permission again after returning from settings
         if (Settings.canDrawOverlays(this)) {
@@ -141,7 +144,12 @@ class MainActivity : AppCompatActivity() {
                     it.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
                     val intent = Intent(this, AddAlarmActivity::class.java)
                     addAlarmLauncher.launch(intent)
-                    overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, R.anim.slide_in_right, R.anim.slide_out_left)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                    }
                 }.start()
             }
 
@@ -179,6 +187,38 @@ class MainActivity : AppCompatActivity() {
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
         return true
+    }
+
+    override fun onPrepareOptionsMenu(menu: Menu?): Boolean {
+        // Force black text to ensure readability on the light popup background
+        menu?.let {
+            for (i in 0 until it.size()) {
+                val menuItem = it.getItem(i)
+                val spannable = SpannableString(menuItem.title)
+                spannable.setSpan(
+                    ForegroundColorSpan(Color.BLACK),
+                    0,
+                    spannable.length,
+                    SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                menuItem.title = spannable
+                // Also color sub-menu items (e.g. theme names)
+                menuItem.subMenu?.let { sub ->
+                    for (j in 0 until sub.size()) {
+                        val subItem = sub.getItem(j)
+                        val subSpan = SpannableString(subItem.title)
+                        subSpan.setSpan(
+                            ForegroundColorSpan(Color.BLACK),
+                            0,
+                            subSpan.length,
+                            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                        subItem.title = subSpan
+                    }
+                }
+            }
+        }
+        return super.onPrepareOptionsMenu(menu)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -226,7 +266,9 @@ class MainActivity : AppCompatActivity() {
         val palette = ThemeManager.getSelectedPalette(this)
 
         // Window / status bar
+        @Suppress("DEPRECATION")
         window.statusBarColor = palette.statusBar
+        @Suppress("DEPRECATION")
         window.navigationBarColor = palette.background
 
         // Background
@@ -251,14 +293,8 @@ class MainActivity : AppCompatActivity() {
         feedbackButton.iconTint = ColorStateList.valueOf(palette.fabIcon)
 
         // Decor view for light/dark status bar icons
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val flags = window.decorView.systemUiVisibility
-            if (isLightColor(palette.statusBar)) {
-                window.decorView.systemUiVisibility = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-            } else {
-                window.decorView.systemUiVisibility = flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
-            }
-        }
+        androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+            .isAppearanceLightStatusBars = isLightColor(palette.statusBar)
     }
 
     private fun applyThemeAnimated() {
@@ -289,12 +325,15 @@ class MainActivity : AppCompatActivity() {
         toolbarAnimator.start()
 
         // Status bar
+        @Suppress("DEPRECATION")
         val statusAnimator = ValueAnimator.ofObject(ArgbEvaluator(), window.statusBarColor, palette.statusBar)
         statusAnimator.duration = 400
         statusAnimator.addUpdateListener { animator ->
+            @Suppress("DEPRECATION")
             window.statusBarColor = animator.animatedValue as Int
         }
         statusAnimator.start()
+        @Suppress("DEPRECATION")
         window.navigationBarColor = palette.background
 
         // Text and other elements (immediate but with fadeIn)
@@ -309,14 +348,8 @@ class MainActivity : AppCompatActivity() {
         feedbackButton.setTextColor(palette.fabIcon)
         feedbackButton.iconTint = ColorStateList.valueOf(palette.fabIcon)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val flags = window.decorView.systemUiVisibility
-            if (isLightColor(palette.statusBar)) {
-                window.decorView.systemUiVisibility = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-            } else {
-                window.decorView.systemUiVisibility = flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
-            }
-        }
+        androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+            .isAppearanceLightStatusBars = isLightColor(palette.statusBar)
     }
 
     private fun isLightColor(color: Int): Boolean {
@@ -496,24 +529,46 @@ class MainActivity : AppCompatActivity() {
 
     private fun sendFeedbackWithLogs() {
         try {
-            val emailIntent = Intent(Intent.ACTION_SEND)
-            emailIntent.type = "message/rfc822"
-            emailIntent.putExtra(Intent.EXTRA_EMAIL, arrayOf("9000applications@gmail.com"))
-            emailIntent.putExtra(Intent.EXTRA_SUBJECT, "Feedback: Step Alarm")
-            emailIntent.putExtra(Intent.EXTRA_TEXT, "Please share your feedback below:\n\n")
-            
-            // Attach logs if available
-            val logUri = LogFileWriter.getLogFileUri(this)
-            if (logUri != null) {
-                emailIntent.putExtra(Intent.EXTRA_STREAM, logUri)
-                emailIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Build dialog with "attach app logs" checkbox
+            val checkBox = android.widget.CheckBox(this).apply {
+                text = "Attach app logs"
+                isChecked = true
+                setPadding(48, 24, 48, 8)
             }
-            
-            val chooserIntent = Intent.createChooser(emailIntent, "Send Feedback")
-            // Note: resolveActivity() returns null on Android 11+ due to package visibility.
-            // Just try to start the activity and catch if nothing handles it.
+
+            AlertDialog.Builder(this)
+                .setTitle("Send Feedback")
+                .setMessage("Select the email app to send your feedback")
+                .setView(checkBox)
+                .setPositiveButton("Continue") { _, _ ->
+                    launchFeedbackEmail(attachLogs = checkBox.isChecked)
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Unable to send feedback: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun launchFeedbackEmail(attachLogs: Boolean) {
+        try {
+            val emailIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "message/rfc822"
+                putExtra(Intent.EXTRA_EMAIL, arrayOf("9000applications@gmail.com"))
+                putExtra(Intent.EXTRA_SUBJECT, "Feedback: Step Alarm")
+                putExtra(Intent.EXTRA_TEXT, "Please share your feedback below:\n\n")
+
+                if (attachLogs) {
+                    val logUri = LogFileWriter.getLogFileUri(this@MainActivity)
+                    if (logUri != null) {
+                        putExtra(Intent.EXTRA_STREAM, logUri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                }
+            }
+
             try {
-                startActivity(chooserIntent)
+                startActivity(Intent.createChooser(emailIntent, "Send feedback"))
             } catch (e: android.content.ActivityNotFoundException) {
                 LogFileWriter.logWarning(this, TAG, "No email app available for feedback")
                 Toast.makeText(this, "No email app available", Toast.LENGTH_SHORT).show()
@@ -533,11 +588,10 @@ class MainActivity : AppCompatActivity() {
                 if (appUpdateInfo.isUpdateTypeAllowed(PlayCoreAppUpdateType.IMMEDIATE)) {
                     // Start immediate update flow
                     try {
-                        appUpdateManager.startUpdateFlowForResult(
+                        appUpdateManager.startUpdateFlow(
                             appUpdateInfo,
-                            PlayCoreAppUpdateType.IMMEDIATE,
                             this,
-                            IN_APP_UPDATE_REQUEST_CODE
+                            AppUpdateOptions.newBuilder(PlayCoreAppUpdateType.IMMEDIATE).build()
                         )
                     } catch (e: Exception) {
                         // Fallback: show dialog to go to Play Store
